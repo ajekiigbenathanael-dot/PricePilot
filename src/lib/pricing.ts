@@ -6,6 +6,7 @@
  * "best price" means the same thing everywhere.
  */
 import type { PricePoint, Product, RetailerOffer } from '@/types';
+import { PLATFORMS, type PlatformSlug } from '@/lib/constants';
 
 /** The honest price you'd pay at a store: item price + its shipping. */
 export function offerTotal(offer: RetailerOffer): number {
@@ -86,4 +87,119 @@ export function priceTrend(history: PricePoint[]): PriceTrend {
 
   if (Math.abs(delta) < 0.01) return { direction: 'flat', delta: 0 };
   return { direction: delta < 0 ? 'down' : 'up', delta: Math.abs(delta) };
+}
+
+/* --------------------------------------------------------------------------
+ * Product-detail comparison table
+ * ------------------------------------------------------------------------ */
+
+/**
+ * One row of the full comparison table on the product page. Unlike
+ * `sortedOffers` (which lists only stores that carry the product), this always
+ * yields a row for EVERY known platform — stores that don't stock the product
+ * get `offer: null`, rendered as "Not listed" (never blank, never a fake price).
+ */
+export interface ComparisonRow {
+  platform: PlatformSlug;
+  /** Display label for the store (e.g. "Jumia"). */
+  retailer: string;
+  /** The store's offer, or `null` when the platform doesn't list the product. */
+  offer: RetailerOffer | null;
+  /** Total (price + shipping), or `null` when not listed. */
+  total: number | null;
+  /** The single cheapest in-stock offer across all platforms — highlighted. */
+  isCheapest: boolean;
+}
+
+/**
+ * Build a comparison row for each of the five platforms, ordered for the table:
+ * cheapest in-stock first, remaining in-stock next (cheapest → dearest),
+ * out-of-stock after, and "Not listed" platforms last (in canonical order).
+ */
+export function comparisonRows(product: Product): ComparisonRow[] {
+  const offerByPlatform = new Map<PlatformSlug, RetailerOffer>(
+    (product.offers ?? []).map((o) => [o.platform, o]),
+  );
+
+  // The cheapest *in-stock* total is the one row we highlight as "Best price".
+  let bestPlatform: PlatformSlug | null = null;
+  let bestTotal = Infinity;
+  for (const offer of product.offers ?? []) {
+    if (offer.inStock && offerTotal(offer) < bestTotal) {
+      bestTotal = offerTotal(offer);
+      bestPlatform = offer.platform;
+    }
+  }
+
+  const rows: ComparisonRow[] = PLATFORMS.map((p) => {
+    const offer = offerByPlatform.get(p.slug) ?? null;
+    return {
+      platform: p.slug,
+      retailer: p.label,
+      offer,
+      total: offer ? offerTotal(offer) : null,
+      isCheapest: offer !== null && p.slug === bestPlatform,
+    };
+  });
+
+  // Rank groups, then sort by total within a group. Not-listed rows keep the
+  // canonical platform order (their total is null).
+  const rank = (r: ComparisonRow): number => {
+    if (r.isCheapest) return 0;
+    if (r.offer && r.offer.inStock) return 1;
+    if (r.offer && !r.offer.inStock) return 2;
+    return 3; // not listed
+  };
+
+  return rows.sort((a, b) => {
+    const byRank = rank(a) - rank(b);
+    if (byRank !== 0) return byRank;
+    if (a.total === null || b.total === null) return 0;
+    return a.total - b.total;
+  });
+}
+
+/* --------------------------------------------------------------------------
+ * Price history (sparkline)
+ * ------------------------------------------------------------------------ */
+
+export interface HistoryStats {
+  /** Oldest recorded price in the series. */
+  first: number;
+  /** Most recent recorded price. */
+  last: number;
+  /** Lowest and highest prices in the series (sparkline y-axis bounds). */
+  min: number;
+  max: number;
+  /** Signed change from first → last (negative = price fell). */
+  change: number;
+  /** Rounded percentage change relative to the first price. */
+  pct: number;
+  direction: TrendDirection;
+}
+
+/**
+ * Summarize a price-history series for the sparkline + change badge. Returns
+ * `null` for series too short to chart (fewer than two points).
+ */
+export function priceHistoryStats(history: PricePoint[]): HistoryStats | null {
+  if (!history || history.length < 2) return null;
+
+  const prices = history.map((p) => p.price);
+  const first = prices[0];
+  const last = prices[prices.length - 1];
+  const change = last - first;
+  const pct = first === 0 ? 0 : Math.round((change / first) * 100);
+  const direction: TrendDirection =
+    Math.abs(change) < 0.01 ? 'flat' : change < 0 ? 'down' : 'up';
+
+  return {
+    first,
+    last,
+    min: Math.min(...prices),
+    max: Math.max(...prices),
+    change,
+    pct,
+    direction,
+  };
 }
