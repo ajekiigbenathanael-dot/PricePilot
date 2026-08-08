@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { TrendDownIcon, TrendUpIcon } from '@/components/ui/icons';
 import { ProductImage } from './ProductImage';
+import { LivePriceTicker } from './LivePriceTicker';
 
 /**
  * Compact product card for grids (landing "trending deals", browse results,
@@ -39,6 +40,12 @@ export function ProductCard({ product }: { product: Product }) {
 
         {/* Body */}
         <div className="flex flex-1 flex-col p-4">
+          {/* Live price-change row — reserved height so event-less cards stay
+              the same height as cards that have a ticker. */}
+          <div className="mb-1.5 min-h-[1.25rem]">
+            <LivePriceTicker events={product.price_events} />
+          </div>
+
           <span className="text-xs font-semibold uppercase tracking-wide text-muted">
             {categoryLabel(product.category)}
           </span>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
+import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion';
 
 /**
  * Rotating value-prop headline for the hero: types a phrase out
@@ -41,24 +42,6 @@ function lastTwoWordStart(phrase: string): number {
   if (words.length <= 2) return 0;
   const tail = words.slice(-2).join(' ');
   return phrase.length - tail.length;
-}
-
-/** Reactively track the user's reduced-motion preference. */
-function usePrefersReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(
-    () =>
-      typeof window !== 'undefined' &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches,
-  );
-
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const onChange = () => setReduced(mq.matches);
-    mq.addEventListener('change', onChange);
-    return () => mq.removeEventListener('change', onChange);
-  }, []);
-
-  return reduced;
 }
 
 interface TypewriterHeadlineProps {
