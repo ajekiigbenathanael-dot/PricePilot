@@ -1,18 +1,28 @@
 import { useMemo, useState } from 'react';
-import { CATEGORIES, type CategorySlug } from '@/lib/constants';
+import type { PlatformMiss, Product } from '@/types';
+import { CATEGORIES, categoryLabel, type CategorySlug } from '@/lib/constants';
 import { FEATURED_PRODUCTS } from '@/lib/sampleProducts';
 import { priceStats } from '@/lib/pricing';
+import { searchProducts } from '@/lib/search';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Container } from '@/components/ui/Container';
-import { SearchIcon, SearchOffIcon, XIcon } from '@/components/ui/icons';
+import { ExternalLinkIcon, SearchIcon, SearchOffIcon, XIcon } from '@/components/ui/icons';
 import { ProductCard } from '@/components/product/ProductCard';
+import { PlatformSummary } from '@/components/product/PlatformSummary';
 
 /**
- * Browse — the core of PricePilot: search or filter the catalog, then scan
- * each product's best price across every store (cheapest total wins). Reads the
- * static sample catalog for now; swaps to a Supabase query in the data phase
- * without changing this UI.
+ * Browse — the core of PricePilot. Two modes share one toolbar:
+ *
+ * • Browse (no search term): the sorted, category-filtered catalog as a card
+ *   grid — for discovery.
+ * • Search (a term is typed): the query fans out across every store via
+ *   `searchProducts`, showing a per-platform summary (cheapest match per store,
+ *   overall cheapest highlighted, "No match" where a store has nothing) with the
+ *   matching products as cards below.
+ *
+ * Both read the static sample catalog for now and swap to a Supabase query in
+ * the data phase without changing this UI.
  */
 
 type SortKey = 'savings' | 'price-asc' | 'price-desc';
@@ -23,47 +33,60 @@ const SORTS: { key: SortKey; label: string }[] = [
   { key: 'price-desc', label: 'Highest price' },
 ];
 
+/** Order a product list by the selected sort, using each product's price stats. */
+function sortProducts(products: Product[], sort: SortKey): Product[] {
+  const withStats = products.map((product) => ({ product, stats: priceStats(product) }));
+  withStats.sort((a, b) => {
+    switch (sort) {
+      case 'price-asc':
+        return a.stats.lowest - b.stats.lowest;
+      case 'price-desc':
+        return b.stats.lowest - a.stats.lowest;
+      case 'savings':
+      default:
+        return b.stats.savings - a.stats.savings;
+    }
+  });
+  return withStats.map((w) => w.product);
+}
+
 export function BrowsePage() {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<CategorySlug | 'all'>('all');
   const [sort, setSort] = useState<SortKey>('savings');
 
-  // Derive stats once per product so search, filter, and sort share them.
-  const catalog = useMemo(
-    () => FEATURED_PRODUCTS.map((product) => ({ product, stats: priceStats(product) })),
-    [],
+  const trimmedQuery = query.trim();
+  const isSearching = trimmedQuery !== '';
+
+  // Search mode: fan the query across every store (category is a pre-filter, so
+  // the summary and the cards below reflect the same constraint).
+  const searchResult = useMemo(
+    () => (isSearching ? searchProducts(trimmedQuery, { category }) : null),
+    [isSearching, trimmedQuery, category],
   );
 
-  const results = useMemo(() => {
-    const q = query.trim().toLowerCase();
+  // Browse mode: the whole (category-filtered) catalog, sorted.
+  const browseList = useMemo(() => {
+    const filtered = FEATURED_PRODUCTS.filter(
+      (p) => category === 'all' || p.category === category,
+    );
+    return sortProducts(filtered, sort);
+  }, [category, sort]);
 
-    const filtered = catalog.filter(({ product }) => {
-      const matchesCategory = category === 'all' || product.category === category;
-      const matchesQuery =
-        q === '' ||
-        product.title.toLowerCase().includes(q) ||
-        (product.brand?.toLowerCase().includes(q) ?? false);
-      return matchesCategory && matchesQuery;
-    });
+  // Matching products for the card grid under the search summary, sorted.
+  const searchCards = useMemo(
+    () => (searchResult ? sortProducts(searchResult.products, sort) : []),
+    [searchResult, sort],
+  );
 
-    return filtered.sort((a, b) => {
-      switch (sort) {
-        case 'price-asc':
-          return a.stats.lowest - b.stats.lowest;
-        case 'price-desc':
-          return b.stats.lowest - a.stats.lowest;
-        case 'savings':
-        default:
-          return b.stats.savings - a.stats.savings;
-      }
-    });
-  }, [catalog, query, category, sort]);
-
-  const hasFilters = query.trim() !== '' || category !== 'all';
+  const hasFilters = isSearching || category !== 'all';
   const clearFilters = () => {
     setQuery('');
     setCategory('all');
   };
+
+  // Result count shown in the status row.
+  const resultCount = isSearching ? (searchResult?.products.length ?? 0) : browseList.length;
 
   return (
     <Container className="py-10 sm:py-14">
@@ -132,18 +155,25 @@ export function BrowsePage() {
         ))}
       </div>
 
-      {/* Result count + clear */}
-      <div className="mt-6 flex items-center justify-between">
+      {/* Status row: result count + clear */}
+      <div className="mt-6 flex items-center justify-between gap-4">
         <p className="text-sm text-muted">
-          <span className="tabular font-semibold text-ink">{results.length}</span>{' '}
-          {results.length === 1 ? 'product' : 'products'}
-          {hasFilters && ' match your filters'}
+          <span className="tabular font-semibold text-ink">{resultCount}</span>{' '}
+          {isSearching ? (resultCount === 1 ? 'result' : 'results') : resultCount === 1 ? 'product' : 'products'}
+          {isSearching ? (
+            <>
+              {' for '}
+              <span className="font-medium text-ink">“{trimmedQuery}”</span>
+            </>
+          ) : (
+            category !== 'all' && <> in {categoryLabel(category)}</>
+          )}
         </p>
         {hasFilters && (
           <button
             type="button"
             onClick={clearFilters}
-            className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:text-primary-hover"
+            className="inline-flex shrink-0 items-center gap-1 text-sm font-medium text-primary hover:text-primary-hover"
           >
             <XIcon className="h-4 w-4" />
             Clear filters
@@ -151,10 +181,46 @@ export function BrowsePage() {
         )}
       </div>
 
-      {/* Results grid or empty state */}
-      {results.length > 0 ? (
+      {/* Body: search results, browse grid, or an empty state */}
+      {isSearching ? (
+        resultCount > 0 && searchResult ? (
+          <>
+            {/* Per-platform price comparison */}
+            <section className="mt-6">
+              <h2 className="font-display text-lg font-bold text-ink sm:text-xl">
+                Price across stores
+              </h2>
+              <p className="mt-1 text-sm text-muted">
+                The cheapest match for “{trimmedQuery}” on each store — cheapest overall highlighted.
+              </p>
+              <div className="mt-4">
+                <PlatformSummary result={searchResult} />
+              </div>
+            </section>
+
+            {/* Matching products */}
+            <section className="mt-10">
+              <h2 className="font-display text-lg font-bold text-ink sm:text-xl">
+                Matching products
+              </h2>
+              <div className="mt-4 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                {searchCards.map((product) => (
+                  <ProductCard key={product.id} product={product} />
+                ))}
+              </div>
+            </section>
+          </>
+        ) : (
+          <SearchEmptyState
+            query={trimmedQuery}
+            category={category}
+            misses={searchResult?.misses ?? []}
+            onClear={clearFilters}
+          />
+        )
+      ) : browseList.length > 0 ? (
         <div className="mt-4 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          {results.map(({ product }) => (
+          {browseList.map((product) => (
             <ProductCard key={product.id} product={product} />
           ))}
         </div>
@@ -163,12 +229,9 @@ export function BrowsePage() {
           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-bg text-muted">
             <SearchOffIcon className="h-7 w-7" />
           </div>
-          <h2 className="mt-4 font-display text-lg font-bold text-ink">No products found</h2>
+          <h2 className="mt-4 font-display text-lg font-bold text-ink">No products yet</h2>
           <p className="mt-1 max-w-sm text-sm text-muted">
-            {query.trim()
-              ? `Nothing matches “${query.trim()}”.`
-              : 'No products in this category yet.'}{' '}
-            Try a different search or clear your filters.
+            No products in this category yet. Try a different category or clear your filters.
           </p>
           <Button variant="secondary" className="mt-5" onClick={clearFilters}>
             Clear filters
@@ -181,6 +244,61 @@ export function BrowsePage() {
         Prices are illustrative until live retailer data is connected.
       </p>
     </Container>
+  );
+}
+
+/**
+ * Empty state for a search that matched nothing. A dead end helps no one, so it
+ * still hands the user an outbound link to search each store directly — the same
+ * store URLs `searchProducts` returns as misses.
+ */
+function SearchEmptyState({
+  query,
+  category,
+  misses,
+  onClear,
+}: {
+  query: string;
+  category: CategorySlug | 'all';
+  misses: PlatformMiss[];
+  onClear: () => void;
+}) {
+  return (
+    <div className="mt-4 flex flex-col items-center justify-center rounded-card border border-dashed border-border bg-surface px-6 py-16 text-center">
+      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-bg text-muted">
+        <SearchOffIcon className="h-7 w-7" />
+      </div>
+      <h2 className="mt-4 font-display text-lg font-bold text-ink">
+        No matches for “{query}”
+      </h2>
+      <p className="mt-1 max-w-md text-sm text-muted">
+        Nothing in our sample catalog matches your search
+        {category !== 'all' && <> in {categoryLabel(category)}</>}. You can still check each store
+        directly:
+      </p>
+
+      {misses.length > 0 && (
+        <div className="mt-5 flex flex-wrap justify-center gap-2">
+          {misses.map((m) => (
+            <a
+              key={m.platform}
+              href={m.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Opens in a new tab"
+              className="inline-flex items-center gap-1.5 rounded-pill border border-border bg-bg px-3.5 py-1.5 text-sm font-medium text-ink transition-colors duration-150 ease-smooth hover:border-primary/40 hover:text-primary"
+            >
+              Search {m.retailer}
+              <ExternalLinkIcon className="h-3.5 w-3.5" />
+            </a>
+          ))}
+        </div>
+      )}
+
+      <Button variant="secondary" className="mt-6" onClick={onClear}>
+        Clear filters
+      </Button>
+    </div>
   );
 }
 

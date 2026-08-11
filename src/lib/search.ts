@@ -19,7 +19,7 @@ import type {
   RetailerOffer,
   SearchResult,
 } from '@/types';
-import type { PlatformSlug } from '@/lib/constants';
+import type { CategorySlug, PlatformSlug } from '@/lib/constants';
 import { PLATFORMS, platformSearchUrl } from '@/lib/constants';
 import { FEATURED_PRODUCTS } from '@/lib/sampleProducts';
 import { offerTotal } from '@/lib/pricing';
@@ -78,6 +78,16 @@ function runAdapter(platform: PlatformSlug, matches: Product[]): AdapterHit | nu
   return best;
 }
 
+/** Optional narrowing applied before the adapters run. */
+export interface SearchOptions {
+  /**
+   * Restrict matches to a single category. `'all'` (or omitted) searches the
+   * whole catalog. Applied *before* the per-platform adapters, so every quote,
+   * miss, and product below reflects the same category constraint.
+   */
+  category?: CategorySlug | 'all';
+}
+
 /**
  * Run a query across every platform and assemble the per-platform breakdown.
  *
@@ -85,12 +95,19 @@ function runAdapter(platform: PlatformSlug, matches: Product[]): AdapterHit | nu
  * (cheapest total first, overall winner flagged), a miss per platform that had
  * none, and the flat list of matched products for the card grid.
  */
-export function searchProducts(rawQuery: string): SearchResult {
+export function searchProducts(rawQuery: string, options: SearchOptions = {}): SearchResult {
   const query = rawQuery.trim();
   const tokens = normalize(query).split(' ').filter(Boolean);
+  const { category } = options;
 
   // Empty query → no matches, but still surface every store's search link.
-  const matches = tokens.length ? CATALOG.filter((p) => productMatches(p, tokens)) : [];
+  let matches = tokens.length ? CATALOG.filter((p) => productMatches(p, tokens)) : [];
+
+  // Category acts as a pre-filter: the quotes are the cheapest match *within*
+  // the selected category, never leaking in an off-category product.
+  if (category && category !== 'all') {
+    matches = matches.filter((p) => p.category === category);
+  }
 
   const quotes: PlatformQuote[] = [];
   const misses: PlatformMiss[] = [];
