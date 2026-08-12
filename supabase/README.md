@@ -77,6 +77,38 @@ Run it again later to record a **second** price — only then does genuine
 ⇒ no movement shown). The `service_role` key is read only by this script and is
 never imported by `src/**`, so it can never reach the frontend bundle.
 
+## Live "Check current price" (Edge Function)
+
+The product page's **Check current price** button does an on-demand version of
+the ingest for a single product. The browser can't do this itself (store CORS,
+the honest bot User-Agent, and the `service_role` write all have to stay
+server-side), so it calls a Supabase **Edge Function**:
+
+```
+supabase/functions/
+├── _shared/jumia.ts      portable JSON-LD parser (same extraction as the scraper)
+└── check-price/index.ts  fetch one product page → append observation → update product
+```
+
+What it does per call: loads the product, finds its re-fetchable Jumia offer (a
+real `….html` product URL, **not** a search URL), does **one** time-bounded
+fetch (10s) unless a reading was recorded in the last ~10 minutes (rate guard),
+then **appends** a `price_observations` row and reflects the price on the
+`products` row. Every non-throttled check records a genuine observation — so a
+second check is what unlocks a real movement badge.
+
+```bash
+# Deploy (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY are auto-injected into the
+# function by the platform — no secrets to set). --no-verify-jwt lets signed-out
+# visitors use the button; the per-product rate guard bounds abuse.
+supabase functions deploy check-price --no-verify-jwt
+```
+
+The button only appears for products that have a real Jumia product-page offer
+(i.e. ones added by `ingest-jumia.mjs`); seed products use search URLs, so it
+stays hidden for them. Before deploying, swap the placeholder contact URL/email
+in the function's `UA` string for your project's real details.
+
 ## Keeping TypeScript in sync
 
 The app's domain types in [`src/types/index.ts`](../src/types/index.ts) mirror this schema by hand. After schema changes, update them there (or later generate with `supabase gen types typescript`).

@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { ROUTES, categoryLabel, platformLabel } from '@/lib/constants';
 import { formatPrice } from '@/lib/utils';
 import { priceHistoryStats, priceStats, primaryObservationSeries } from '@/lib/pricing';
+import { liveCheckableOffer } from '@/lib/liveCheck';
 import { useProduct } from '@/hooks/useProduct';
 import { useObservations } from '@/hooks/useObservations';
 import { Badge } from '@/components/ui/Badge';
@@ -19,6 +20,7 @@ import {
 import { ProductImage } from '@/components/product/ProductImage';
 import { ComparisonTable, ViewOnButton } from '@/components/product/ComparisonTable';
 import { PriceSparkline } from '@/components/product/PriceSparkline';
+import { LiveCheckButton } from '@/components/product/LiveCheckButton';
 
 /**
  * Product detail — the full comparison view for one product: every store side
@@ -32,15 +34,23 @@ import { PriceSparkline } from '@/components/product/PriceSparkline';
  */
 export function ProductDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { product, loading, error, refetch } = useProduct(id);
+  const { product, loading, error, refetch: refetchProduct } = useProduct(id);
   // All platforms' observations; we pick a single series to chart below.
-  const { observations, loading: historyLoading } = useObservations(id);
+  const {
+    observations,
+    loading: historyLoading,
+    refetch: refetchObservations,
+  } = useObservations(id);
 
   if (loading) return <DetailSkeleton />;
-  if (error) return <DetailError message={error} onRetry={refetch} />;
+  if (error) return <DetailError message={error} onRetry={refetchProduct} />;
   if (!product) return <ProductNotFound />;
 
   const { lowest, savings, storeCount, cheapest } = priceStats(product);
+
+  // Only offer a live check when there's a real Jumia product page to re-fetch
+  // (seed offers point at search URLs, so the button stays hidden for them).
+  const liveOffer = liveCheckableOffer(product);
 
   // Real price history: one platform's recorded observations. `history` is null
   // until we have ≥2 points, so no movement is ever shown from a single reading.
@@ -112,6 +122,15 @@ export function ProductDetailPage() {
             </p>
             {cheapest && (
               <ViewOnButton offer={cheapest} primary className="mt-4 w-full sm:w-auto" />
+            )}
+            {liveOffer && (
+              <LiveCheckButton
+                productId={product.id}
+                onUpdated={() => {
+                  refetchProduct();
+                  refetchObservations();
+                }}
+              />
             )}
           </div>
 
