@@ -167,7 +167,43 @@ To build locally for a smoke test: `npm run build` (runs `tsc -b && vite build`
 
 ---
 
-### Keeping data fresh
-Re-run the relevant `npm run ingest:jumia` commands on a schedule (cron, a CI
-job, or manually). Every run appends one `price_observations` row per product,
-which is what builds real history and unlocks movement badges over time.
+### Keeping data fresh — automated scraping (GitHub Actions)
+
+Price *movement* (the "Down ₦X" badges and the history chart) is derived from
+**≥2 genuine `price_observations` rows per product**, so the catalog has to be
+re-scraped on a schedule for history to build up. That's automated by the
+[`ingest`](.github/workflows/ingest.yml) workflow, which runs
+[`scripts/ingest-all.mjs`](scripts/ingest-all.mjs) over a curated list of search
+targets. One-time setup:
+
+- [ ] **Add repo secrets** under *GitHub → Settings → Secrets and variables →
+      Actions → New repository secret*:
+      - `SUPABASE_URL` — your project URL.
+      - `SUPABASE_SERVICE_ROLE_KEY` — the server-side secret key (same one the
+        ingest uses locally). Storing it here is safe: Actions secrets are
+        encrypted, masked in logs, and the workflow never runs on `pull_request`
+        so fork PRs can't read it. It stays out of the browser bundle entirely.
+      - `SCRAPER_CONTACT` *(recommended)* — a real email or URL for the scraper's
+        User-Agent. Jumia's policy requires a reachable owner for volume
+        crawling; unset, it falls back to a placeholder (ok for a test run, not
+        for the live schedule). Also update the placeholder repo URL in
+        [`scripts/scrape-jumia.mjs`](scripts/scrape-jumia.mjs)'s `UA`.
+- [ ] **Curate the targets** in
+      [`scripts/ingest-targets.json`](scripts/ingest-targets.json) — an array of
+      `{ "q": "<search>", "category": "<slug>", "limit": <N> }`. Categories must
+      be one of the 9 valid slugs. Edit these to the products you want tracked.
+- [ ] **Test it now** without waiting for the cron: *Actions → ingest → Run
+      workflow* (the `workflow_dispatch` button). Watch the log for the per-target
+      tally, then confirm `price_observations` row counts rose in Supabase.
+- [ ] **Cadence** defaults to every 6 hours (`cron: '17 */6 * * *'`, UTC). To
+      change it, edit the `schedule` in the workflow: `'0 * * * *'` for hourly,
+      `'17 6,18 * * *'` for twice daily. Hourly mostly records identical prices
+      (little signal) and uses more Actions minutes on private repos.
+
+> **Heads-up:** GitHub disables scheduled workflows after **60 days with no repo
+> commits** (it emails the last committer) — just re-enable it in the Actions tab.
+> Cron timing is best-effort and can lag a few minutes under load; that's fine
+> for price history.
+
+You can still run ingests by hand anytime — `npm run ingest:all` (all targets)
+or `npm run ingest:jumia -- "<query>" --category=<slug>` (a single one).

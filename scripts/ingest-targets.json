@@ -1,0 +1,11 @@
+[
+  { "q": "infinix", "category": "phones", "limit": 5 },
+  { "q": "phone charger", "category": "accessories", "limit": 5 },
+  { "q": "hp laptop", "category": "laptops", "limit": 5 },
+  { "q": "power bank", "category": "electronics", "limit": 5 },
+  { "q": "exercise book", "category": "textbooks", "limit": 5 },
+  { "q": "backpack", "category": "bags", "limit": 5 },
+  { "q": "rechargeable fan", "category": "dorm-supplies", "limit": 5 },
+  { "q": "sneakers", "category": "fashion", "limit": 5 },
+  { "q": "body lotion", "category": "health", "limit": 5 }
+]

@@ -30,12 +30,16 @@ import { scrapeProduct } from '../_shared/jumia.ts';
 const PLATFORM = 'jumia';
 const RETAILER = 'Jumia';
 
-// Honest, identifying bot UA — same policy as scripts/scrape-jumia.mjs. Swap the
-// URL/contact for your project's real details before running at any volume;
-// Jumia's crawler policy requires a reachable owner.
+// Honest, identifying bot UA — same policy as scripts/scrape-jumia.mjs. Jumia's
+// crawler policy requires a reachable owner, so set a real contact via a
+// SCRAPER_CONTACT function secret (supabase secrets set SCRAPER_CONTACT=…). The
+// committed fallback below is a deliberate placeholder (keeps any personal
+// contact out of source and git history) and must not be used at volume.
+// (Update the repo URL to the real repo once it's pushed.)
+const CONTACT = Deno.env.get('SCRAPER_CONTACT') ?? 'you@example.com (set SCRAPER_CONTACT)';
 const UA =
   'PricePilotBot/0.1 (+https://github.com/your-org/pricepilot; ' +
-  'student price comparison; contact: you@example.com)';
+  `student price comparison; contact: ${CONTACT})`;
 
 const FETCH_TIMEOUT_MS = 10_000;
 // Don't re-fetch the same product more than once per window.

@@ -12,7 +12,8 @@
     "lint": "eslint . --report-unused-disable-directives --max-warnings 0",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
     "scrape:jumia": "node scripts/scrape-jumia.mjs",
-    "ingest:jumia": "node --env-file=.env scripts/ingest-jumia.mjs"
+    "ingest:jumia": "node --env-file=.env scripts/ingest-jumia.mjs",
+    "ingest:all": "node --env-file=.env scripts/ingest-all.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",

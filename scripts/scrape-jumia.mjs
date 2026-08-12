@@ -33,11 +33,16 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 /* --------------------------------------------------------------- config --- */
 
-// Honest bot identity. Swap the URL/email for your real project + contact
-// before running at any volume — Jumia's policy requires a reachable owner.
+// Honest bot identity. Jumia's policy requires a REACHABLE owner, so set a real
+// contact via SCRAPER_CONTACT (an email or URL) — in .env locally and as a
+// GitHub Actions repo secret for the cron. The committed fallback below is a
+// deliberate placeholder (keeps any personal contact out of source and git
+// history) and must not be used for volume crawling. (Update the repo URL to
+// the real repo once it's pushed to GitHub.)
+const CONTACT = process.env.SCRAPER_CONTACT ?? 'you@example.com (set SCRAPER_CONTACT)';
 const UA =
   'PricePilotBot/0.1 (+https://github.com/your-org/pricepilot; ' +
-  'student price comparison; contact: you@example.com)';
+  `student price comparison; contact: ${CONTACT})`;
 
 const PLATFORM = 'jumia';
 const RETAILER = 'Jumia';

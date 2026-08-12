@@ -1,0 +1,58 @@
+# Scheduled Jumia price ingest.
+#
+# Runs scripts/ingest-all.mjs on a cron to keep the catalog fresh and build up
+# real price history in price_observations over time (movement badges/charts
+# need >=2 genuine observations per product). See DEPLOYMENT.md → "Automated
+# scraping" for the one-time setup (repo secrets + editing ingest-targets.json).
+name: ingest
+
+on:
+  # Every 6 hours, at :17 past to avoid GitHub's top-of-the-hour congestion.
+  # Times are UTC. Cadence knob: "0 * * * *" = hourly, "17 6,18 * * *" = twice
+  # daily. Hourly stores mostly identical prices (noise) and burns more Actions
+  # minutes on a private repo — 6h is a good default.
+  schedule:
+    - cron: '17 */6 * * *'
+  # Manual trigger from the Actions tab — use this to test without waiting for
+  # the cron.
+  workflow_dispatch:
+
+# Least privilege: this job only reads the checkout; it writes to Supabase over
+# the network, never back to the repo.
+permissions:
+  contents: read
+
+# Never let two ingests overlap; if one is still running, don't start another
+# (and don't cancel the in-flight one — let it finish writing).
+concurrency:
+  group: ingest
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    # NOTE: this workflow is intentionally NOT triggered by pull_request, so the
+    # service_role secret is never exposed to fork PRs.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run batch ingest
+        # Call node directly (not `npm run ingest:all`, which adds --env-file=.env
+        # that doesn't exist in CI). The script reads these from process.env.
+        run: node scripts/ingest-all.mjs
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # Optional: a real reachable contact for the scraper's User-Agent.
+          # Falls back to a placeholder if unset (fine for testing, not volume).
+          SCRAPER_CONTACT: ${{ secrets.SCRAPER_CONTACT }}
