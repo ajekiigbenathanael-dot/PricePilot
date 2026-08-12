@@ -6,6 +6,9 @@ dist/
 dist-ssr/
 *.local
 
+# Scraper output (regenerable raw scraped JSON — not source)
+scraper-out/
+
 # Environment — never commit real keys
 .env
 .env.*

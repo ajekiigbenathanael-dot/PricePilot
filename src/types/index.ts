@@ -49,6 +49,26 @@ export interface PriceEvent {
   minutesAgo: number;
 }
 
+/**
+ * One genuinely-recorded price observation — an append-only row in the
+ * `price_observations` table (migration 0004), written by the server-side ingest
+ * (`scripts/ingest-jumia.mjs`) on every scrape. This is the REAL price history:
+ * movement ("dropped/increased by ₦X") is derived by comparing two observations,
+ * never stored as a claim, so it can't be faked. Fewer than 2 rows for a
+ * product+platform ⇒ no previous price ⇒ no movement to show. Not yet read by
+ * the UI (the frontend still uses sample data until the read path is flipped).
+ */
+export interface PriceObservation {
+  id: string;
+  product_id: string;
+  platform: PlatformSlug;
+  price: number;
+  currency: string; // e.g. "NGN"
+  /** Availability at observation time; null when the source didn't state it. */
+  in_stock: boolean | null;
+  scraped_at: string; // ISO timestamp of when the price was observed
+}
+
 /** A public product in the catalog (public read, no public write). */
 export interface Product {
   id: string;
