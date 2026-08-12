@@ -2,7 +2,7 @@
 
 > Compare prices. Shop smarter.
 
-A calm, trustworthy price-comparison platform for students  find the best price on everything students buy — electronics, textbooks, backpacks, dorm gear, wearables and more — across stores, and get alerted when prices drop.
+A calm, trustworthy price-comparison platform for students  find the best price on everything students buy  electronics, textbooks, backpacks, dorm gear, wearables and more  across stores, and get alerted when prices drop.
 
 Built to feel like the love-child of a clean banking app and a well-designed shopping app: airy, card-based, mobile-first, with color used **functionally** (green = savings, amber = price up, red = destructive only) so the numbers do the talking.
 
