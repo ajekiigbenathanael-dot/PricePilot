@@ -7,10 +7,11 @@
  * carries, then assemble a per-platform breakdown with the overall cheapest
  * highlighted. Stores that carry nothing for the query come back as "misses".
  *
- * Today each adapter reads the local sample catalog. When real scraping lands,
- * only the adapter *internals* change — swap the catalog read for an HTTP call
- * to that store — and every return shape (PlatformQuote / PlatformMiss /
- * SearchResult) stays identical, so the UI never changes.
+ * The catalog is INJECTED by the caller (`searchProducts(query, catalog, …)`)
+ * rather than imported here, so the same pure engine runs over whatever source
+ * the page fetched — today the live Supabase catalog, a fixture in a test, or a
+ * future per-store HTTP adapter. Every return shape (PlatformQuote /
+ * PlatformMiss / SearchResult) stays identical, so the UI never changes.
  */
 import type {
   PlatformMiss,
@@ -21,11 +22,7 @@ import type {
 } from '@/types';
 import type { CategorySlug, PlatformSlug } from '@/lib/constants';
 import { PLATFORMS, platformSearchUrl } from '@/lib/constants';
-import { FEATURED_PRODUCTS } from '@/lib/sampleProducts';
 import { offerTotal } from '@/lib/pricing';
-
-/** The catalog every adapter searches. Swap for a live source later. */
-const CATALOG: Product[] = FEATURED_PRODUCTS;
 
 /** Normalize text for loose matching: lowercase, strip punctuation, collapse space. */
 function normalize(text: string): string {
@@ -91,17 +88,26 @@ export interface SearchOptions {
 /**
  * Run a query across every platform and assemble the per-platform breakdown.
  *
+ * @param rawQuery the user's search text.
+ * @param catalog the products to search — injected by the caller (the live
+ *   Supabase catalog in the app, a fixture in tests). This is the seam a real
+ *   per-store scraper drops into without changing any return shape.
+ * @param options optional narrowing (e.g. a single {@link SearchOptions.category}).
  * @returns a {@link SearchResult}: one quote per platform that had a match
  * (cheapest total first, overall winner flagged), a miss per platform that had
  * none, and the flat list of matched products for the card grid.
  */
-export function searchProducts(rawQuery: string, options: SearchOptions = {}): SearchResult {
+export function searchProducts(
+  rawQuery: string,
+  catalog: Product[],
+  options: SearchOptions = {},
+): SearchResult {
   const query = rawQuery.trim();
   const tokens = normalize(query).split(' ').filter(Boolean);
   const { category } = options;
 
   // Empty query → no matches, but still surface every store's search link.
-  let matches = tokens.length ? CATALOG.filter((p) => productMatches(p, tokens)) : [];
+  let matches = tokens.length ? catalog.filter((p) => productMatches(p, tokens)) : [];
 
   // Category acts as a pre-filter: the quotes are the cheapest match *within*
   // the selected category, never leaking in an off-category product.

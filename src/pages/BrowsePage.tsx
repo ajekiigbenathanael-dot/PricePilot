@@ -59,9 +59,10 @@ export function BrowsePage() {
   const isSearching = trimmedQuery !== '';
 
   // Search mode: fan the query across every store (category is a pre-filter, so
-  // the summary and the cards below reflect the same constraint).
+  // the summary and the cards below reflect the same constraint). Phase C swaps
+  // the FEATURED_PRODUCTS catalog here for the live Supabase-fetched list.
   const searchResult = useMemo(
-    () => (isSearching ? searchProducts(trimmedQuery, { category }) : null),
+    () => (isSearching ? searchProducts(trimmedQuery, FEATURED_PRODUCTS, { category }) : null),
     [isSearching, trimmedQuery, category],
   );
 
