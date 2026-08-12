@@ -1,14 +1,21 @@
 import { useMemo, useState } from 'react';
 import type { PlatformMiss, Product } from '@/types';
 import { CATEGORIES, categoryLabel, type CategorySlug } from '@/lib/constants';
-import { FEATURED_PRODUCTS } from '@/lib/sampleProducts';
 import { priceStats } from '@/lib/pricing';
 import { searchProducts } from '@/lib/search';
-import { Badge } from '@/components/ui/Badge';
+import { useProducts } from '@/hooks/useProducts';
 import { Button } from '@/components/ui/Button';
 import { Container } from '@/components/ui/Container';
-import { ExternalLinkIcon, SearchIcon, SearchOffIcon, XIcon } from '@/components/ui/icons';
+import {
+  AlertTriangleIcon,
+  ExternalLinkIcon,
+  SearchIcon,
+  SearchOffIcon,
+  TagIcon,
+  XIcon,
+} from '@/components/ui/icons';
 import { ProductCard } from '@/components/product/ProductCard';
+import { ProductCardSkeleton } from '@/components/product/ProductCardSkeleton';
 import { PlatformSummary } from '@/components/product/PlatformSummary';
 
 /**
@@ -21,8 +28,8 @@ import { PlatformSummary } from '@/components/product/PlatformSummary';
  *   overall cheapest highlighted, "No match" where a store has nothing) with the
  *   matching products as cards below.
  *
- * Both read the static sample catalog for now and swap to a Supabase query in
- * the data phase without changing this UI.
+ * Both read the live Supabase catalog via `useProducts`; the page renders its
+ * own loading, error, and empty states around that data.
  */
 
 type SortKey = 'savings' | 'price-asc' | 'price-desc';
@@ -55,24 +62,25 @@ export function BrowsePage() {
   const [category, setCategory] = useState<CategorySlug | 'all'>('all');
   const [sort, setSort] = useState<SortKey>('savings');
 
+  // Live catalog from Supabase — the whole catalog, filtered client-side below.
+  const { products, loading, error, refetch } = useProducts();
+
   const trimmedQuery = query.trim();
   const isSearching = trimmedQuery !== '';
 
-  // Search mode: fan the query across every store (category is a pre-filter, so
-  // the summary and the cards below reflect the same constraint). Phase C swaps
-  // the FEATURED_PRODUCTS catalog here for the live Supabase-fetched list.
+  // Search mode: fan the query across every store over the live catalog
+  // (category is a pre-filter, so the summary and the cards below reflect the
+  // same constraint).
   const searchResult = useMemo(
-    () => (isSearching ? searchProducts(trimmedQuery, FEATURED_PRODUCTS, { category }) : null),
-    [isSearching, trimmedQuery, category],
+    () => (isSearching ? searchProducts(trimmedQuery, products, { category }) : null),
+    [isSearching, trimmedQuery, category, products],
   );
 
   // Browse mode: the whole (category-filtered) catalog, sorted.
   const browseList = useMemo(() => {
-    const filtered = FEATURED_PRODUCTS.filter(
-      (p) => category === 'all' || p.category === category,
-    );
+    const filtered = products.filter((p) => category === 'all' || p.category === category);
     return sortProducts(filtered, sort);
-  }, [category, sort]);
+  }, [products, category, sort]);
 
   // Matching products for the card grid under the search summary, sorted.
   const searchCards = useMemo(
@@ -85,6 +93,10 @@ export function BrowsePage() {
     setQuery('');
     setCategory('all');
   };
+
+  // Only show the result-count row + filtered body once there's a loaded,
+  // non-empty catalog to describe (loading/error/empty are handled separately).
+  const hasCatalog = !loading && !error && products.length > 0;
 
   // Result count shown in the status row.
   const resultCount = isSearching ? (searchResult?.products.length ?? 0) : browseList.length;
@@ -156,34 +168,42 @@ export function BrowsePage() {
         ))}
       </div>
 
-      {/* Status row: result count + clear */}
-      <div className="mt-6 flex items-center justify-between gap-4">
-        <p className="text-sm text-muted">
-          <span className="tabular font-semibold text-ink">{resultCount}</span>{' '}
-          {isSearching ? (resultCount === 1 ? 'result' : 'results') : resultCount === 1 ? 'product' : 'products'}
-          {isSearching ? (
-            <>
-              {' for '}
-              <span className="font-medium text-ink">“{trimmedQuery}”</span>
-            </>
-          ) : (
-            category !== 'all' && <> in {categoryLabel(category)}</>
+      {/* Status row: result count + clear (only once a catalog is loaded) */}
+      {hasCatalog && (
+        <div className="mt-6 flex items-center justify-between gap-4">
+          <p className="text-sm text-muted">
+            <span className="tabular font-semibold text-ink">{resultCount}</span>{' '}
+            {isSearching ? (resultCount === 1 ? 'result' : 'results') : resultCount === 1 ? 'product' : 'products'}
+            {isSearching ? (
+              <>
+                {' for '}
+                <span className="font-medium text-ink">“{trimmedQuery}”</span>
+              </>
+            ) : (
+              category !== 'all' && <> in {categoryLabel(category)}</>
+            )}
+          </p>
+          {hasFilters && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="inline-flex shrink-0 items-center gap-1 text-sm font-medium text-primary hover:text-primary-hover"
+            >
+              <XIcon className="h-4 w-4" />
+              Clear filters
+            </button>
           )}
-        </p>
-        {hasFilters && (
-          <button
-            type="button"
-            onClick={clearFilters}
-            className="inline-flex shrink-0 items-center gap-1 text-sm font-medium text-primary hover:text-primary-hover"
-          >
-            <XIcon className="h-4 w-4" />
-            Clear filters
-          </button>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Body: search results, browse grid, or an empty state */}
-      {isSearching ? (
+      {/* Body: loading / error / empty catalog, else search or browse results */}
+      {loading ? (
+        <SkeletonGrid />
+      ) : error ? (
+        <LoadErrorState message={error} onRetry={refetch} />
+      ) : products.length === 0 ? (
+        <CatalogEmptyState />
+      ) : isSearching ? (
         resultCount > 0 && searchResult ? (
           <>
             {/* Per-platform price comparison */}
@@ -230,21 +250,67 @@ export function BrowsePage() {
           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-bg text-muted">
             <SearchOffIcon className="h-7 w-7" />
           </div>
-          <h2 className="mt-4 font-display text-lg font-bold text-ink">No products yet</h2>
+          <h2 className="mt-4 font-display text-lg font-bold text-ink">Nothing in this category</h2>
           <p className="mt-1 max-w-sm text-sm text-muted">
-            No products in this category yet. Try a different category or clear your filters.
+            No products in {categoryLabel(category as CategorySlug)} yet. Try a different category
+            or clear your filters.
           </p>
           <Button variant="secondary" className="mt-5" onClick={clearFilters}>
             Clear filters
           </Button>
         </div>
       )}
-
-      <p className="mt-10 text-center text-xs text-muted">
-        <Badge tone="primary">Sample data</Badge>{' '}
-        Prices are illustrative until live retailer data is connected.
-      </p>
     </Container>
+  );
+}
+
+/** Grid of placeholder cards shown while the live catalog loads. */
+function SkeletonGrid() {
+  return (
+    <div
+      className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3"
+      aria-hidden="true"
+    >
+      {Array.from({ length: 6 }).map((_, i) => (
+        <ProductCardSkeleton key={i} />
+      ))}
+    </div>
+  );
+}
+
+/** Shown when the catalog fetch fails — with a retry back into `useProducts`. */
+function LoadErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="mt-8 flex flex-col items-center justify-center rounded-card border border-dashed border-border bg-surface px-6 py-16 text-center">
+      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-warning/10 text-warning">
+        <AlertTriangleIcon className="h-7 w-7" />
+      </div>
+      <h2 className="mt-4 font-display text-lg font-bold text-ink">Couldn’t load products</h2>
+      <p className="mt-1 max-w-sm text-sm text-muted">{message}</p>
+      <Button variant="secondary" className="mt-5" onClick={onRetry}>
+        Try again
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * Shown when the catalog is genuinely empty. PricePilot lists only real, scraped
+ * store prices, so before the first ingest run there is simply nothing to show —
+ * we say that honestly rather than inventing placeholder products.
+ */
+function CatalogEmptyState() {
+  return (
+    <div className="mt-8 flex flex-col items-center justify-center rounded-card border border-dashed border-border bg-surface px-6 py-16 text-center">
+      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-bg text-muted">
+        <TagIcon className="h-7 w-7" />
+      </div>
+      <h2 className="mt-4 font-display text-lg font-bold text-ink">No products yet</h2>
+      <p className="mt-1 max-w-sm text-sm text-muted">
+        PricePilot only shows real prices pulled live from the stores. We’re adding them
+        now — check back soon.
+      </p>
+    </div>
   );
 }
 
