@@ -5,7 +5,7 @@
  * price trend. Shared by the landing page, browse grid, and product detail so
  * "best price" means the same thing everywhere.
  */
-import type { PricePoint, Product, RetailerOffer } from '@/types';
+import type { PriceObservation, PricePoint, Product, RetailerOffer } from '@/types';
 import { PLATFORMS, type PlatformSlug } from '@/lib/constants';
 
 /** The honest price you'd pay at a store: item price + its shipping. */
@@ -201,5 +201,65 @@ export function priceHistoryStats(history: PricePoint[]): HistoryStats | null {
     change,
     pct,
     direction,
+  };
+}
+
+/* --------------------------------------------------------------------------
+ * Real price history (from price_observations)
+ * ------------------------------------------------------------------------ */
+
+export interface ObservationSeries {
+  /** Platform whose history is charted, or `null` when there's nothing to chart. */
+  platform: PlatformSlug | null;
+  /** Oldest → newest points for `platform` (empty when `platform` is null). */
+  points: PricePoint[];
+}
+
+/**
+ * Choose which platform's price history to chart for a product. Movement is only
+ * meaningful WITHIN one store — a line that hops between Jumia and Konga prices
+ * would be nonsense — so we pick a single platform's series:
+ *
+ *   1. the platform with the cheapest current offer (the price the user acts on),
+ *      when it has any observations on record; otherwise
+ *   2. the platform with the most observations (the best-charted history we have).
+ *
+ * Observations are assumed oldest → newest (as `fetchObservations` returns them).
+ * Returns an empty series when the product has no observations at all.
+ */
+export function primaryObservationSeries(
+  product: Product,
+  observations: PriceObservation[],
+): ObservationSeries {
+  if (observations.length === 0) return { platform: null, points: [] };
+
+  // Group observations by platform, preserving their oldest → newest order.
+  const byPlatform = new Map<PlatformSlug, PriceObservation[]>();
+  for (const obs of observations) {
+    const list = byPlatform.get(obs.platform) ?? [];
+    list.push(obs);
+    byPlatform.set(obs.platform, list);
+  }
+
+  const cheapestPlatform = priceStats(product).cheapest?.platform ?? null;
+  let chosen: PlatformSlug | null =
+    cheapestPlatform && byPlatform.has(cheapestPlatform) ? cheapestPlatform : null;
+
+  if (!chosen) {
+    // Fall back to the platform we've recorded the most prices for.
+    let mostSoFar = -1;
+    for (const [platform, list] of byPlatform) {
+      if (list.length > mostSoFar) {
+        mostSoFar = list.length;
+        chosen = platform;
+      }
+    }
+  }
+
+  const list = chosen ? (byPlatform.get(chosen) ?? []) : [];
+  return {
+    platform: chosen,
+    // scraped_at is an ISO timestamp; the sparkline only needs the date part.
+    points: list.map((obs) => ({ date: obs.scraped_at.slice(0, 10), price: obs.price })),
   };
 }
