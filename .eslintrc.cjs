@@ -15,5 +15,23 @@ module.exports = {
   rules: {
     'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
     '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+    // `sampleProducts.ts` is dev-only seed data — read as text by
+    // `scripts/gen-seed.mjs` to build `supabase/seed.sql`. It must NEVER be
+    // imported by the app: PricePilot renders only live, scraped Supabase data,
+    // never fabricated sample prices. This turns that invariant into a hard
+    // error so it can't silently regress. (gen-seed reads the file via `fs`,
+    // not `import`, so it's unaffected.)
+    'no-restricted-imports': [
+      'error',
+      {
+        patterns: [
+          {
+            group: ['@/lib/sampleProducts', '**/sampleProducts'],
+            message:
+              'sampleProducts is dev seed data (scripts/gen-seed.mjs → supabase/seed.sql). App code must read live Supabase data, never fabricated samples.',
+          },
+        ],
+      },
+    ],
   },
 };
