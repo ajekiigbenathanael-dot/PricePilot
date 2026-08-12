@@ -1,7 +1,9 @@
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import type { Product } from '@/types';
-import { CATEGORIES, ROUTES } from '@/lib/constants';
-import { FEATURED_PRODUCTS, HERO_PRODUCT } from '@/lib/sampleProducts';
+import { CATEGORIES, PLATFORMS, ROUTES } from '@/lib/constants';
+import { priceStats } from '@/lib/pricing';
+import { useProducts } from '@/hooks/useProducts';
 import { Button } from '@/components/ui/Button';
 import { Container } from '@/components/ui/Container';
 import { TypewriterHeadline } from '@/components/ui/TypewriterHeadline';
@@ -16,12 +18,43 @@ import {
 } from '@/components/ui/icons';
 import { HeroComparison } from '@/components/product/HeroComparison';
 import { ProductCard } from '@/components/product/ProductCard';
+import { ProductCardSkeleton } from '@/components/product/ProductCardSkeleton';
 import { CATEGORY_BLURB, CATEGORY_ICON } from '@/components/product/categoryMeta';
 
-/** One standout deal per category — flexes the full breadth of the catalog. */
-const TRENDING_DEALS: Product[] = CATEGORIES.map((c) =>
-  FEATURED_PRODUCTS.find((p) => p.category === c.slug && p.id !== HERO_PRODUCT.id),
-).filter((p): p is Product => Boolean(p));
+/**
+ * The headline product for the hero comparison card. We want the most
+ * convincing demo: a product carried by several stores (so there's a real
+ * comparison to show) with the biggest saving. Returns null on an empty
+ * catalog so the hero falls back to a placeholder instead of inventing data.
+ */
+function pickHeroProduct(products: Product[]): Product | null {
+  if (products.length === 0) return null;
+  const ranked = products
+    .map((product) => ({ product, stats: priceStats(product) }))
+    .sort((a, b) => {
+      // Multi-store products first — the comparison card needs rows to compare.
+      const aMulti = a.stats.storeCount >= 2 ? 1 : 0;
+      const bMulti = b.stats.storeCount >= 2 ? 1 : 0;
+      if (aMulti !== bMulti) return bMulti - aMulti;
+      return b.stats.savings - a.stats.savings;
+    });
+  return ranked[0].product;
+}
+
+/**
+ * One standout deal per category (biggest saving), excluding the hero product —
+ * the grid flexes the full breadth of the catalog. Derived live, so it grows
+ * with the real catalog and simply shows fewer cards until more lands.
+ */
+function pickTrendingDeals(products: Product[], excludeId: string | undefined): Product[] {
+  return CATEGORIES.map((c) => {
+    const best = products
+      .filter((p) => p.category === c.slug && p.id !== excludeId)
+      .map((product) => ({ product, stats: priceStats(product) }))
+      .sort((a, b) => b.stats.savings - a.stats.savings)[0];
+    return best?.product;
+  }).filter((p): p is Product => Boolean(p));
+}
 
 const HOW_IT_WORKS = [
   {
@@ -44,6 +77,17 @@ const HOW_IT_WORKS = [
 const TRUST_POINTS = ['Free to use', 'No account needed to browse', 'Unbiased — never sponsored'];
 
 export function LandingPage() {
+  // Live catalog from Supabase — the hero comparison and trending deals are both
+  // derived from real products (never invented), with skeletons while it loads
+  // and a graceful "prices on the way" state before the first ingest.
+  const { products, loading } = useProducts();
+
+  const heroProduct = useMemo(() => pickHeroProduct(products), [products]);
+  const trendingDeals = useMemo(
+    () => pickTrendingDeals(products, heroProduct?.id),
+    [products, heroProduct],
+  );
+
   return (
     <>
       {/* ---------------------------------------------------------------- Hero */}
@@ -70,9 +114,12 @@ export function LandingPage() {
               <TypewriterHeadline className="mt-5 max-w-xl" />
 
               <p className="mt-5 max-w-xl text-lg leading-relaxed text-muted">
-                Compare prices across Amazon, Best Buy, Walmart and more — electronics,
-                textbooks, backpacks, dorm gear and beyond. Track any product and get
-                alerted the moment it drops.
+                Find the{' '}
+                <b className="font-semibold text-ink">
+                  cheapest prices across Jumia, Konga, Slot, PayPorte &amp; Temu
+                </b>{' '}
+                — electronics, textbooks, backpacks, dorm gear and beyond. Track any product
+                and get alerted the moment it drops.
               </p>
 
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
@@ -99,9 +146,15 @@ export function LandingPage() {
               </ul>
             </div>
 
-            {/* Value-prop visual */}
+            {/* Value-prop visual — live comparison, skeleton, or graceful placeholder */}
             <div className="lg:pl-6">
-              <HeroComparison product={HERO_PRODUCT} />
+              {loading ? (
+                <HeroComparisonSkeleton />
+              ) : heroProduct ? (
+                <HeroComparison product={heroProduct} />
+              ) : (
+                <HeroComparisonPlaceholder />
+              )}
             </div>
           </div>
         </Container>
@@ -125,19 +178,27 @@ export function LandingPage() {
           </Link>
         </div>
 
-        <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          {TRENDING_DEALS.map((product) => (
-            <ProductCard key={product.id} product={product} />
-          ))}
-        </div>
+        {loading ? (
+          <TrendingSkeletonGrid />
+        ) : trendingDeals.length > 0 ? (
+          <>
+            <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+              {trendingDeals.map((product) => (
+                <ProductCard key={product.id} product={product} />
+              ))}
+            </div>
 
-        <div className="mt-8 text-center sm:hidden">
-          <Link to={ROUTES.browse}>
-            <Button variant="secondary" className="w-full">
-              Browse all products
-            </Button>
-          </Link>
-        </div>
+            <div className="mt-8 text-center sm:hidden">
+              <Link to={ROUTES.browse}>
+                <Button variant="secondary" className="w-full">
+                  Browse all products
+                </Button>
+              </Link>
+            </div>
+          </>
+        ) : (
+          <TrendingEmpty />
+        )}
       </Container>
 
       {/* --------------------------------------------------------- How it works */}
@@ -244,5 +305,121 @@ export function LandingPage() {
         </div>
       </Container>
     </>
+  );
+}
+
+/** Loading placeholder mirroring {@link HeroComparison}'s frame, so the hero
+ *  column holds its shape while the live catalog loads. */
+function HeroComparisonSkeleton() {
+  return (
+    <div
+      className="animate-pulse rounded-card border border-border bg-surface shadow-card-hover"
+      aria-hidden="true"
+    >
+      {/* Product header */}
+      <div className="flex items-center gap-4 border-b border-border p-5">
+        <div className="h-16 w-16 shrink-0 rounded-control bg-border/60" />
+        <div className="min-w-0 flex-1">
+          <div className="h-3 w-20 rounded bg-border/60" />
+          <div className="mt-2 h-4 w-3/4 rounded bg-border/70" />
+        </div>
+      </div>
+
+      {/* Offer rows */}
+      <div className="space-y-2 p-5">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div
+            key={i}
+            className="flex items-center justify-between rounded-control bg-bg px-3.5 py-3"
+          >
+            <div className="h-4 w-24 rounded bg-border/60" />
+            <div className="h-4 w-16 rounded bg-border/60" />
+          </div>
+        ))}
+      </div>
+
+      {/* Savings footer */}
+      <div className="flex items-center justify-between border-t border-border bg-bg px-5 py-4">
+        <div>
+          <div className="h-3 w-28 rounded bg-border/60" />
+          <div className="mt-2 h-6 w-32 rounded bg-border/70" />
+        </div>
+        <div className="h-9 w-20 rounded-control bg-border/50" />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Shown in the hero when the catalog is empty (before the first ingest, or if
+ * the load fails). Keeps the comparison card's visual weight but shows honest
+ * "not listed yet" rows instead of fabricated prices.
+ */
+function HeroComparisonPlaceholder() {
+  return (
+    <div className="rounded-card border border-border bg-surface shadow-card-hover">
+      <div className="flex items-center gap-4 border-b border-border p-5">
+        <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-control bg-primary/10 text-primary">
+          <TagIcon className="h-7 w-7" />
+        </div>
+        <div className="min-w-0">
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted">
+            Live comparison
+          </div>
+          <h3 className="font-display text-base font-bold text-ink">Prices on the way</h3>
+        </div>
+      </div>
+
+      <div className="space-y-2 p-5">
+        {PLATFORMS.map((platform) => (
+          <div
+            key={platform.slug}
+            className="flex items-center justify-between rounded-control border border-transparent bg-bg px-3.5 py-2.5"
+          >
+            <span className="font-medium text-ink">{platform.label}</span>
+            <span className="text-xs text-muted">Not listed yet</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="border-t border-border bg-bg px-5 py-4 text-sm leading-relaxed text-muted">
+        We’re pulling live prices from every store now — real comparisons show up here the
+        moment they land.
+      </div>
+    </div>
+  );
+}
+
+/** Grid of placeholder cards shown while the trending deals load. */
+function TrendingSkeletonGrid() {
+  return (
+    <div
+      className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3"
+      aria-hidden="true"
+    >
+      {Array.from({ length: 6 }).map((_, i) => (
+        <ProductCardSkeleton key={i} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Graceful empty state for the trending section. PricePilot only shows real,
+ * scraped prices, so before the first ingest there's simply nothing to feature —
+ * we say so honestly rather than inventing placeholder deals.
+ */
+function TrendingEmpty() {
+  return (
+    <div className="mt-8 flex flex-col items-center justify-center rounded-card border border-dashed border-border bg-surface px-6 py-16 text-center">
+      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-bg text-muted">
+        <TagIcon className="h-7 w-7" />
+      </div>
+      <h3 className="mt-4 font-display text-lg font-bold text-ink">Deals are on the way</h3>
+      <p className="mt-1 max-w-sm text-sm text-muted">
+        We only feature real prices pulled live from the stores. We’re adding them now —
+        check back soon.
+      </p>
+    </div>
   );
 }
