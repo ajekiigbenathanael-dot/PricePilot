@@ -153,3 +153,8 @@ export interface SearchResult {
   /** All products that matched, for the card grid below the summary. */
   products: Product[];
 }
+
+/** SearchResult returned by the `search-miss` Edge Function. */
+export interface LiveSearchResult extends SearchResult {
+  live: true;
+}
