@@ -2,6 +2,7 @@ import { createBrowserRouter } from 'react-router-dom';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { ROUTES } from '@/lib/constants';
 import {
+  AdminPage,
   BrowsePage,
   LandingPage,
   LoginPage,
@@ -11,12 +12,8 @@ import {
   SignupPage,
   WishlistPage,
 } from '@/pages';
+import { RequireAuth } from '@/components/auth/RequireAuth';
 
-/**
- * Application routes. All pages render inside the AppLayout shell (nav +
- * footer). `wishlist` and `settings` are user-only screens; route guards are
- * added in the auth phase — for now they render as placeholders.
- */
 export const router = createBrowserRouter([
   {
     element: <AppLayout />,
@@ -26,8 +23,9 @@ export const router = createBrowserRouter([
       { path: ROUTES.signup, element: <SignupPage /> },
       { path: ROUTES.browse, element: <BrowsePage /> },
       { path: ROUTES.product, element: <ProductDetailPage /> },
-      { path: ROUTES.wishlist, element: <WishlistPage /> },
-      { path: ROUTES.settings, element: <SettingsPage /> },
+      { path: ROUTES.wishlist, element: <RequireAuth><WishlistPage /></RequireAuth> },
+      { path: ROUTES.settings, element: <RequireAuth><SettingsPage /></RequireAuth> },
+      { path: ROUTES.admin, element: <RequireAuth><AdminPage /></RequireAuth> },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

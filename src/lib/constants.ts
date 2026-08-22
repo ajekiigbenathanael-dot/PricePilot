@@ -12,6 +12,7 @@ export const ROUTES = {
   product: '/product/:id',
   wishlist: '/wishlist',
   settings: '/settings',
+  admin: '/admin',
 } as const;
 
 /** Build a product detail path for a given id. */

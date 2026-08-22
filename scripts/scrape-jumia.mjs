@@ -23,7 +23,7 @@
  * Usage:  node scripts/scrape-jumia.mjs "infinix hot"
  * Output: printed table + scraper-out/jumia-<slug>.json
  *
- * Zero external deps (native fetch + node:zlib), matching scripts/gen-seed.mjs.
+ * Zero external deps (native fetch + node:zlib).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -40,7 +40,9 @@ import { setTimeout as sleep } from 'node:timers/promises';
 // history) and must not be used for volume crawling. (Update the repo URL to
 // the real repo once it's pushed to GitHub.)
 const CONTACT = process.env.SCRAPER_CONTACT ?? 'you@example.com (set SCRAPER_CONTACT)';
-const UA =
+// Exported so server-side callers that do their own single fetch (api/check-price)
+// reuse the exact same honest, identifying User-Agent instead of duplicating it.
+export const UA =
   'PricePilotBot/0.1 (+https://github.com/your-org/pricepilot; ' +
   `student price comparison; contact: ${CONTACT})`;
 
@@ -187,6 +189,10 @@ export function scrapeProduct(html, url) {
     availability,
     inStock: availability ? /instock/i.test(availability) : null,
     brand,
+    // Jumia's own leaf category for this exact item (e.g. "Android Phones" vs
+    // "Flip Cases"). Kept raw and un-mapped here — the ingest step classifies it
+    // onto our taxonomy — so this stays a faithful record of what the page said.
+    source_category: typeof product.category === 'string' ? product.category : null,
     image_url: normalizeImage(product.image),
     url,
     scraped_at: new Date().toISOString(),
@@ -243,7 +249,7 @@ if (invokedDirectly) {
 
   for (const [i, p] of results.entries()) {
     console.log(`${i + 1}. ${p.title}`);
-    console.log(`   ${naira(p.price)} ${p.currency ?? ''}  ·  ${p.availability ?? 'unknown'}${p.brand ? `  ·  ${p.brand}` : ''}`);
+    console.log(`   ${naira(p.price)} ${p.currency ?? ''}  ·  ${p.availability ?? 'unknown'}${p.brand ? `  ·  ${p.brand}` : ''}${p.source_category ? `  ·  ${p.source_category}` : ''}`);
     console.log(`   ${p.url}\n`);
   }
 

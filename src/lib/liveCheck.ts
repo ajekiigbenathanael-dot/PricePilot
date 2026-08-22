@@ -1,7 +1,7 @@
-import { supabase } from '@/lib/supabase';
+import { apiFetch } from '@/lib/api';
 import type { Product, RetailerOffer } from '@/types';
 
-/** What the `check-price` Edge Function returns on success. */
+/** What POST /api/check-price returns on success. */
 export interface LiveCheckResult {
   /** `updated` = a fresh reading was fetched + recorded; `throttled` = we reused
    *  a very recent reading instead of hitting the store again. */
@@ -32,33 +32,14 @@ export function liveCheckableOffer(product: Product): RetailerOffer | null {
 }
 
 /**
- * Ask the `check-price` Edge Function to fetch this product's current Jumia
- * price right now. The function does the server-side, robots-compliant fetch,
+ * Ask POST /api/check-price to fetch this product's current Jumia price right
+ * now. The serverless function does the server-side, robots-compliant fetch,
  * appends a real `price_observations` row, and updates the product; we just
- * relay the result. Throws with a readable message on failure.
+ * relay the result. `apiFetch` throws with the server's own message on failure.
  */
 export async function checkCurrentPrice(productId: string): Promise<LiveCheckResult> {
-  const { data, error } = await supabase.functions.invoke<LiveCheckResult>('check-price', {
-    body: { productId },
+  return apiFetch<LiveCheckResult>('/api/check-price', {
+    method: 'POST',
+    json: { productId },
   });
-
-  if (error) {
-    // supabase-js wraps a non-2xx response in a FunctionsHttpError whose
-    // `context` is the raw Response — surface the function's own { error }
-    // message when we can, else fall back to the generic error text.
-    let message = error.message;
-    const context = (error as { context?: unknown }).context;
-    if (context instanceof Response) {
-      try {
-        const body = await context.json();
-        if (body && typeof body.error === 'string') message = body.error;
-      } catch {
-        /* keep the generic message */
-      }
-    }
-    throw new Error(message);
-  }
-
-  if (!data) throw new Error('No response from the price check.');
-  return data;
 }

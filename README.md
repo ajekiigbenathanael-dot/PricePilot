@@ -2,7 +2,7 @@
 
 > Compare prices. Shop smarter.
 
-A calm, trustworthy price-comparison platform for students  find the best price on everything students buy — electronics, textbooks, backpacks, dorm gear, wearables and more — across stores, and get alerted when prices drop.
+A calm, trustworthy price-comparison platform for students — find the best price on everything students buy — electronics, textbooks, backpacks, dorm gear, wearables and more — across stores, and get alerted when prices drop.
 
 Built to feel like the love-child of a clean banking app and a well-designed shopping app: airy, card-based, mobile-first, with color used **functionally** (green = savings, amber = price up, red = destructive only) so the numbers do the talking.
 
@@ -13,7 +13,15 @@ Built to feel like the love-child of a clean banking app and a well-designed sho
 | Frontend | React 18 + Vite + TypeScript |
 | Styling | Tailwind CSS v3 (design tokens in `tailwind.config.ts`) |
 | Routing | React Router v6 |
-| Backend / DB / Auth | Supabase (Postgres, Supabase Auth, Row Level Security) |
+| API | Vercel serverless functions under [`api/`](./api/) (same-origin `/api`) |
+| Database | MongoDB (official Node driver) |
+| Prices | Node ingest scraping Jumia (sitemap + JSON-LD) — [`scripts/`](./scripts/) |
+
+MongoDB has no browser SDK, so — unlike a Supabase-style setup — the React app
+never touches the database directly. Every read/write goes through the app's own
+**same-origin `/api`**, which holds the MongoDB connection server-side. In
+production Vercel runs each file in `api/` as a serverless function; in dev a small
+Vite plugin mounts the same handlers in-process (`npm run dev` just works).
 
 ## Getting started
 
@@ -23,22 +31,31 @@ Built to feel like the love-child of a clean banking app and a well-designed sho
 npm install
 ```
 
-### 2. Set up Supabase & environment variables
+### 2. Set up MongoDB & environment variables
 
-1. Create a free project at **[supabase.com](https://supabase.com)** → **New project**.
-2. In the dashboard, go to **Project Settings → API**.
-3. Copy your credentials into a `.env` file (copy from `.env.example`):
+1. Provision a **MongoDB** database — a free **[MongoDB Atlas](https://www.mongodb.com/atlas)**
+   cluster (`mongodb+srv://…`) for production, or a local one for dev
+   (`mongodb://localhost:27017`, e.g. `docker run -p 27017:27017 mongo:7`).
+2. Copy your values into a `.env` file (copy from `.env.example`):
 
    ```bash
    cp .env.example .env
    ```
 
-   | Env var | Where to find it |
+   | Env var | Purpose |
    | --- | --- |
-   | `VITE_SUPABASE_URL` | Project Settings → API → **Project URL** |
-   | `VITE_SUPABASE_ANON_KEY` | Project Settings → API → Project API keys → **anon / public** |
+   | `MONGODB_URI` | Connection string (Atlas `mongodb+srv://…` or `mongodb://localhost:27017`) |
+   | `MONGODB_DB` *(optional)* | Database name (defaults to `pricepilot`) |
+   | `SCRAPER_CONTACT` *(recommended)* | Real email/URL for the scraper's honest User-Agent |
 
-   > ⚠️ Only the **anon/public** key belongs in the frontend. Never put the `service_role` key here — `VITE_`-prefixed vars are bundled into the client. `.env` is gitignored; only `.env.example` is committed.
+   > ⚠️ `MONGODB_URI` is **server-side only** — never prefix it with `VITE_` and
+   > never import it from `src/**`; `VITE_`-prefixed vars get bundled into the
+   > client. The browser needs no env var: it calls same-origin `/api` by default.
+   > `.env` is gitignored; only `.env.example` is committed.
+
+There is **no schema/migration step** — MongoDB is schemaless and the app creates
+its collections and indexes automatically on first connect. The catalog is
+populated by scraping (see the ingest below and [DEPLOYMENT.md](./DEPLOYMENT.md)).
 
 ### 3. Run the dev server
 
@@ -46,31 +63,57 @@ npm install
 npm run dev
 ```
 
-The app runs at [http://localhost:5173](http://localhost:5173).
+The app runs at [http://localhost:5173](http://localhost:5173), with the `/api`
+functions served in-process (they read `MONGODB_URI` from `.env`).
+
+### 4. Populate the catalog
+
+Real, re-checkable prices are scraped from Jumia by the ingest:
+
+```bash
+npm run ingest:jumia -- "infinix hot" --category=phones
+```
+
+Run it again hours/days later to build price history (movement badges and the
+chart need ≥2 genuine observations). Full go-live path — Atlas, Vercel env vars,
+and the scheduled cron — is in [DEPLOYMENT.md](./DEPLOYMENT.md).
 
 ## Scripts
 
 | Command | Description |
 | --- | --- |
-| `npm run dev` | Start the Vite dev server |
+| `npm run dev` | Start the Vite dev server (app + `/api`) |
 | `npm run build` | Type-check and build for production |
 | `npm run preview` | Preview the production build locally |
-| `npm run typecheck` | Type-check without emitting |
+| `npm run typecheck` | Type-check without emitting (app + `/api`) |
 | `npm run lint` | Lint with ESLint |
 | `npm run format` | Format with Prettier |
+| `npm run scrape:jumia` | Scrape a Jumia search to a JSON file (no DB write) |
+| `npm run ingest:jumia -- "<query>" --category=<slug>` | Scrape + write one search to MongoDB |
+| `npm run ingest:all` | Run every target in `scripts/ingest-targets.json` |
 
 ## Project structure
 
 ```
+api/                 Vercel serverless functions (the app's backend)
+├── _lib/            db connection (cached), JSON serializers, http helpers
+├── products/        GET catalog + GET one product
+├── observations.ts  GET price history for a product
+├── check-price.ts   POST live re-check of one product's Jumia offer
+└── search-miss.ts   POST live Jumia search when the catalog has no match
+
+scripts/             Node ingest + scraper (server-side, writes to MongoDB)
+vite/                dev-only plugin that serves api/ during `npm run dev`
+
 src/
 ├── components/
 │   ├── layout/      App shell — Navbar, Footer, AppLayout
 │   └── ui/          Reusable primitives — Button, Card, Badge, Container, PageHeader
-├── hooks/           Reusable React hooks (auth, data — added in later phases)
-├── lib/             supabase client, app constants, utils
+├── hooks/           Data-loading hooks (useProducts, useProduct, useObservations)
+├── lib/             API client (api.ts), data-access modules, constants, utils
 ├── pages/           Route-level screens (one per route)
 ├── routes/          Router configuration
-└── types/           Shared TypeScript types (Product, Profile, WishlistItem, PriceAlert)
+└── types/           Shared TypeScript types (Product, Offer, PriceObservation, …)
 ```
 
 ## Design system
@@ -82,25 +125,29 @@ All design tokens live in [`tailwind.config.ts`](./tailwind.config.ts) — **com
 - **Shape** — `rounded-card` (12px), `rounded-control` (8px), `rounded-pill`. Soft `shadow-card`.
 - **Layout** — `max-w-content` (1200px), generous padding, mobile-first.
 
-## Database (Supabase)
+## Data (MongoDB)
 
-Schema, Row Level Security, and sample data live in [`supabase/`](./supabase/) — see [supabase/README.md](./supabase/README.md) for how to apply them (Dashboard SQL Editor or the Supabase CLI).
+The browser never connects to MongoDB — it reads and writes through the
+same-origin `/api`. Two collections back the app:
 
-| Table | Purpose | Access |
-| --- | --- | --- |
-| `profiles` | 1 row per user, auto-created on signup | owner only |
-| `products` | public catalog (offers inline as JSONB) | public read |
-| `wishlist_items` | saved products | owner only |
-| `price_alerts` | "notify below target" rules | owner only |
+| Collection | Purpose |
+| --- | --- |
+| `products` | Public catalog; offers stored inline. `_id` is a deterministic UUIDv5 of the product URL, so `/product/:id` links stay stable across re-ingests. |
+| `price_observations` | Append-only real price history — one document per reading, behind the movement badge and the history chart. |
 
-Apply order: `migrations/0001` → `migrations/0002` → `seed.sql`. After running, the app can read 12 sample products across the six categories.
+Account features (profiles, wishlist, price alerts) have placeholder types and UI
+but are **not wired to a backend** — see "Roadmap" below. Provisioning, indexes,
+and the scraping pipeline are documented in [DEPLOYMENT.md](./DEPLOYMENT.md).
 
 ## Roadmap
 
-Phase 1 (done) — app shell, routing, tokens, Supabase client.
-Phase 2 (done) — database schema + RLS + sample data.
-Upcoming — auth (email/password), browse/search, product-detail comparison, wishlist, price alerts.
+- **Done** — app shell, routing, and design tokens; live browse/search and
+  product-detail comparison reading the real catalog via `/api`; live "Check
+  current price" re-check; live Jumia search when the catalog has no match; the
+  scheduled ingest that builds price history.
+- **Upcoming** — auth (email/password), and wiring wishlist + price alerts to it.
 
 ## Status
 
-🚧 **Scaffold + database ready.** Feature UIs are next; routes still render placeholders.
+✅ **Core price-comparison flow is live** end to end (real scraped data, no
+fabricated fallback). Auth-gated features (wishlist, alerts) remain placeholders.

@@ -12,7 +12,7 @@ export interface UseProductsResult {
 }
 
 /**
- * Load the product catalog from Supabase once, exposing `{ products, loading,
+ * Load the product catalog from the API once, exposing `{ products, loading,
  * error, refetch }` for the page to render its loading / error / empty states.
  *
  * Browse fetches the WHOLE catalog (no category argument) and filters it

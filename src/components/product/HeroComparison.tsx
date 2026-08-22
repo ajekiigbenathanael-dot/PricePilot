@@ -21,7 +21,7 @@ export function HeroComparison({ product }: { product: Product }) {
       <div className="flex items-center gap-4 border-b border-border p-5">
         <ProductImage
           product={product}
-          className="h-16 w-16 shrink-0 rounded-control border border-border"
+          className="h-14 w-24 shrink-0 rounded-control border border-border"
         />
         <div className="min-w-0">
           <div className="text-xs font-semibold uppercase tracking-wide text-muted">

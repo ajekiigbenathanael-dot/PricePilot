@@ -77,7 +77,7 @@ const HOW_IT_WORKS = [
 const TRUST_POINTS = ['Free to use', 'No account needed to browse', 'Unbiased — never sponsored'];
 
 export function LandingPage() {
-  // Live catalog from Supabase — the hero comparison and trending deals are both
+  // Live catalog from the API — the hero comparison and trending deals are both
   // derived from real products (never invented), with skeletons while it loads
   // and a graceful "prices on the way" state before the first ingest.
   const { products, loading } = useProducts();
@@ -287,6 +287,7 @@ export function LandingPage() {
               <Link to={ROUTES.signup}>
                 <Button
                   size="lg"
+                  variant="secondary"
                   className="w-full bg-white text-primary hover:bg-white/90 sm:w-auto"
                 >
                   Create free account

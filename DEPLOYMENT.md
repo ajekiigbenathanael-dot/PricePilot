@@ -3,71 +3,82 @@
 Everything the app needs to show **live data** end to end. Work top to bottom;
 each section has a checkbox list you can tick off.
 
-The app renders **only real, scraped prices from Supabase** — there is no
-fabricated fallback. So until the schema exists and the catalog has at least one
-product, the UI correctly shows its empty states ("Prices on the way", "Deals
-are on the way"). That's expected, not a bug.
+The app renders **only real, scraped prices** — there is no fabricated fallback.
+So until MongoDB is reachable and the catalog has at least one product, the UI
+correctly shows its empty states ("Prices on the way", "Deals are on the way").
+That's expected, not a bug.
 
-> **What runs where (security).** The browser only ever uses the **anon** key
-> (`VITE_*`), guarded by Row Level Security. The **service_role** key is
-> server-side only — used by the ingest script and auto-injected into the Edge
-> Function. It is never `VITE_`-prefixed and never imported by `src/**`, so it
-> can't reach the browser bundle.
+> **What runs where (security).** The browser never talks to the database. It
+> only calls the app's own **same-origin `/api`** (Vercel serverless functions),
+> which hold the MongoDB connection server-side. `MONGODB_URI` is a **server-only**
+> secret — it is **never** `VITE_`-prefixed and never imported by `src/**`, so it
+> can't reach the browser bundle. (There is no anon/service-role split to reason
+> about anymore — MongoDB has no browser SDK, so all DB access is server-side by
+> construction.)
 
 ---
 
 ## 0. Prerequisites
 
-- [ ] A Supabase project (note its **Project URL**, **anon key**, and
-      **service_role key** from *Project Settings → API*).
+- [ ] A **MongoDB** database. Either:
+      - **MongoDB Atlas** free tier (recommended for production) — create a
+        cluster, a database user with **readWrite** on the `pricepilot` database,
+        and grab the `mongodb+srv://…` connection string from *Database → Connect
+        → Drivers*; **or**
+      - a **local** MongoDB for dev: `mongodb://localhost:27017` (e.g.
+        `docker run -p 27017:27017 mongo:7`).
 - [ ] **Node 20.6+** (the ingest uses `node --env-file`).
 - [ ] Dependencies installed: `npm install`.
-- [ ] *(Optional, for migrations + Edge Function via CLI)* the Supabase CLI:
-      ```bash
-      npm install -g supabase
-      supabase login
-      supabase link --project-ref <your-project-ref>
-      ```
+
+> **Atlas network access:** Vercel and GitHub Actions connect from **dynamic IPs**,
+> so in *Atlas → Network Access* either allow `0.0.0.0/0` (relying on the strong
+> password in the connection string) or use Atlas's Vercel integration. A narrow
+> IP allowlist will silently block the functions and the cron.
 
 ---
 
 ## 1. Configure environment
 
-- [ ] Copy the template and fill in your project's values:
+- [ ] Copy the template and fill in your values:
       ```bash
       cp .env.example .env
       ```
-- [ ] Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (frontend).
-- [ ] Set `SUPABASE_SERVICE_ROLE_KEY` (server-side ingest only).
+- [ ] Set `MONGODB_URI` (server-side only) — your Atlas `mongodb+srv://…` string
+      or `mongodb://localhost:27017`.
+- [ ] *(Optional)* `MONGODB_DB` — the database name (defaults to `pricepilot`).
+- [ ] *(Recommended)* `SCRAPER_CONTACT` — a real email or URL for the scraper's
+      User-Agent (see step 6).
 
-`.env` is gitignored — never commit real keys.
+`.env` is gitignored — never commit real credentials. The browser needs **no**
+env var: it calls same-origin `/api` by default. (`VITE_API_BASE_URL` exists only
+to point the browser at a *different* API origin — rare, and it must be an origin
+URL, never a secret.)
 
 ---
 
 ## 2. Create the database schema
 
-Apply the migrations **in order**: `0001 → 0002 → 0003 → 0004`. Full
-instructions (Dashboard SQL Editor or `supabase db push`) live in
-[`supabase/README.md`](supabase/README.md).
+Nothing to run. **MongoDB is schemaless**, and the app creates its indexes
+automatically the first time the API or the ingest connects (`ensureIndexes()` in
+[`api/_lib/db.ts`](api/_lib/db.ts) and [`scripts/db.mjs`](scripts/db.mjs)):
 
-- [ ] `0001_initial_schema.sql` — tables, indexes, triggers
-- [ ] `0002_rls_policies.sql` — Row Level Security + policies
-- [ ] `0003_widen_categories.sql` — widen `products.category` to the 9 slugs
-- [ ] `0004_price_observations.sql` — append-only real price history
+- **`products`** — `_id` is a deterministic UUIDv5 of the product URL, so
+  `/product/:id` links are stable across re-ingests. Index on `{ category: 1 }`.
+- **`price_observations`** — append-only real price history. Index on
+  `{ product_id: 1, platform: 1, scraped_at: -1 }` (the hot "latest reading"
+  read behind movement badges and the chart).
 
-Re-running is safe: migrations are idempotent.
+So the first ingest (step 3) both creates the collections/indexes and populates
+them. There is no migration step.
 
 ---
 
 ## 3. Populate the catalog
 
-Pick the path that matches your goal.
+Real, re-checkable prices scraped from Jumia. Only products added this way get a
+working **"Check current price"** button and a real price-history chart.
 
-### Production / live (recommended)
-Real, re-checkable prices scraped from Jumia. Only products added this way get
-a working **"Check current price"** button and a real price-history chart.
-
-- [ ] Confirm `SUPABASE_SERVICE_ROLE_KEY` is set in `.env` (step 1).
+- [ ] Confirm `MONGODB_URI` is set in `.env` (step 1).
 - [ ] Run the ingest for the searches you want to list:
       ```bash
       npm run ingest:jumia -- "infinix hot" --category=phones
@@ -79,61 +90,52 @@ a working **"Check current price"** button and a real price-history chart.
       ("Down ₦X") is *derived* from two genuine observations — a single reading
       shows no trend by design.
 
-### Demo / dev only (optional)
-A quick sample catalog so the UI isn't empty while you evaluate it.
-
-- [ ] Apply [`supabase/seed.sql`](supabase/seed.sql) (see `supabase/README.md`).
-
-> Seed products use store **search** URLs, not deep product links — so they have
-> **no** live-check button and **no** recorded observations (the history card
-> shows "No price history recorded yet"). They're placeholders for layout, not
-> live data. For anything real, use the ingest above.
+> There is no demo `seed.sql` anymore — the ingest **is** the data path. If you
+> need a placeholder catalog for a pure-layout review, the sample data in
+> [`src/lib/sampleProducts.ts`](src/lib/sampleProducts.ts) is retained as seed
+> material (a small `scripts/seed-mongo.mjs` is a possible follow-up), but it has
+> no live-check button and no recorded observations. For anything real, ingest.
 
 ---
 
-## 4. Deploy the live "Check current price" function
+## 4. Run it locally
 
-The product page's live check calls the `check-price` Supabase Edge Function
-(the browser can't fetch a store directly — CORS, the honest bot User-Agent, and
-the service_role write all stay server-side).
+`npm run dev` serves the app **and** the `/api` functions from one process — a
+small Vite plugin ([`vite/api-dev-plugin.ts`](vite/api-dev-plugin.ts)) mounts each
+`api/*.ts` handler in-process and loads `.env` (including the server-only
+`MONGODB_URI`) into `process.env`. No separate function server or CLI is needed.
 
-- [ ] Edit [`supabase/functions/check-price/index.ts`](supabase/functions/check-price/index.ts)
-      and replace the **placeholder contact URL/email** in the `UA` string with
-      your project's real details.
-- [ ] Deploy it:
-      ```bash
-      supabase functions deploy check-price --no-verify-jwt
-      ```
-      `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` are auto-injected — no secrets
-      to set. `--no-verify-jwt` lets signed-out visitors use the button; the
-      per-product ~10-minute rate guard bounds abuse.
+- [ ] `npm run dev` → open http://localhost:5173.
+- [ ] Browse and a product page load from `/api/products`; the category filter
+      works; on an ingested product, **Check current price** returns a price.
 
-The button only appears on products with a real Jumia `.html` product offer
-(i.e. ones added by the ingest in step 3), so it stays hidden until then.
+In production there is no dev plugin — **Vercel** runs each file under `/api` as a
+real serverless function (see step 5).
 
 ---
 
-## 5. Build & host the frontend (Vercel)
+## 5. Build & host the frontend + API (Vercel)
 
 - [ ] Push the repo to GitHub/GitLab/Bitbucket and **import the project** into
       Vercel (or use the CLI path below).
-- [ ] Leave build settings on **auto-detect** — Vercel recognizes Vite and uses
-      build command `npm run build` and output directory `dist`. No overrides
-      needed.
+- [ ] Leave build settings on **auto-detect** — Vercel recognizes Vite (build
+      `npm run build`, output `dist`) and automatically deploys every file under
+      [`api/`](api/) as a Node serverless function. No overrides needed.
 - [ ] Add environment variables under **Project → Settings → Environment
-      Variables** (for **Production**, and **Preview** if you use preview
-      deploys):
-      - `VITE_SUPABASE_URL`
-      - `VITE_SUPABASE_ANON_KEY`
+      Variables** (for **Production**, and **Preview** if you use preview deploys):
+      - `MONGODB_URI` — **required.** The serverless functions read it at runtime
+        (it is *not* inlined into the client, unlike `VITE_` vars). Do **not**
+        prefix it with `VITE_`.
+      - `MONGODB_DB` — *optional* (defaults to `pricepilot`).
+      - `SCRAPER_CONTACT` — *recommended* for the live-check function's User-Agent.
 
-      Vite **inlines** these at build time, so add them *before* the build and
-      **redeploy** after any change.
+      Redeploy after adding or changing any of these so the functions pick them up.
 - [ ] Confirm [`vercel.json`](vercel.json) is committed at the repo root. Its
-      SPA rewrite sends every non-file request to `index.html`, so client-side
-      routes like `/product/:id` load on refresh / direct navigation instead of
-      404ing. (Vercel checks the filesystem first, so hashed assets in
-      `/assets/*` are still served normally.)
-- [ ] Deploy. Vercel builds and serves `dist/`.
+      SPA rewrite uses a negative lookahead — `"/((?!api/).*)" → "/index.html"` —
+      so client-side routes like `/product/:id` load on refresh **without**
+      swallowing `/api/*` requests. (Vercel checks the filesystem and functions
+      first, so hashed assets in `/assets/*` and the API are served normally.)
+- [ ] Deploy. Vercel builds `dist/` and provisions the `/api` functions.
 
 **CLI alternative:**
 ```bash
@@ -141,20 +143,41 @@ npm install -g vercel
 vercel          # preview deploy
 vercel --prod   # production deploy
 ```
-Set the same two env vars with `vercel env add` (or in the dashboard) before the
+Set the same env vars with `vercel env add` (or in the dashboard) before the
 first production build.
 
 To build locally for a smoke test: `npm run build` (runs `tsc -b && vite build`
-→ `dist/`), then `npm run preview`.
+→ `dist/`), then `npm run preview`. Note that `preview` serves only the static
+`dist/` — the `/api` functions are exercised by `npm run dev` (step 4) or on the
+deployed Vercel site.
 
 ---
 
-## 6. Smoke test
+## 6. Scraper contact (honest User-Agent)
+
+The live check and the ingest fetch Jumia with an **identifying** User-Agent
+(never a fake browser). Jumia's crawler policy requires a reachable owner.
+
+- [ ] Set `SCRAPER_CONTACT` (a real email or URL) — in `.env` locally, as a
+      **Vercel env var** for the live-check function, and as a **GitHub Actions
+      repo secret** for the cron (step 8). Unset, it falls back to the committed
+      placeholder in [`scripts/scrape-jumia.mjs`](scripts/scrape-jumia.mjs) — fine
+      for a test run, not for volume crawling; also update the placeholder repo
+      URL in that file's `UA` string.
+
+The **Check current price** button only appears on products with a real Jumia
+`.html` product offer (i.e. ones added by the ingest in step 3), so it stays
+hidden until then.
+
+---
+
+## 7. Smoke test
 
 - [ ] **Landing** (`/`) shows the hero comparison and trending deals from live
       products (not the "Prices on the way" placeholder).
 - [ ] **Browse** (`/browse`) lists products; search fans out with a per-store
-      summary; category filters work.
+      summary; category filters work. A search with no catalog match triggers
+      `/api/search-miss` and renders live Jumia results inline.
 - [ ] **Product detail** (`/product/:id`) loads; the comparison table ranks
       stores cheapest-first.
 - [ ] On an **ingested** product, **Check current price** appears, runs, and
@@ -163,38 +186,38 @@ To build locally for a smoke test: `npm run build` (runs `tsc -b && vite build`
       honest empty/one-reading message otherwise.
 - [ ] **Deep-link refresh**: hard-refresh (or open in a new tab) a
       `/product/:id` URL on the deployed site — it loads the page, *not* a 404.
-      This confirms the `vercel.json` SPA rewrite is active.
+      This confirms the `vercel.json` SPA rewrite is active and does not shadow
+      `/api`.
 
 ---
 
-### Keeping data fresh — automated scraping (GitHub Actions)
+## 8. Keeping data fresh — automated scraping (GitHub Actions)
 
 Price *movement* (the "Down ₦X" badges and the history chart) is derived from
-**≥2 genuine `price_observations` rows per product**, so the catalog has to be
-re-scraped on a schedule for history to build up. That's automated by the
+**≥2 genuine `price_observations` documents per product**, so the catalog has to
+be re-scraped on a schedule for history to build up. That's automated by the
 [`ingest`](.github/workflows/ingest.yml) workflow, which runs
 [`scripts/ingest-all.mjs`](scripts/ingest-all.mjs) over a curated list of search
-targets. One-time setup:
+targets and writes to MongoDB. One-time setup:
 
 - [ ] **Add repo secrets** under *GitHub → Settings → Secrets and variables →
       Actions → New repository secret*:
-      - `SUPABASE_URL` — your project URL.
-      - `SUPABASE_SERVICE_ROLE_KEY` — the server-side secret key (same one the
-        ingest uses locally). Storing it here is safe: Actions secrets are
-        encrypted, masked in logs, and the workflow never runs on `pull_request`
-        so fork PRs can't read it. It stays out of the browser bundle entirely.
+      - `MONGODB_URI` — the same server-side connection string the ingest uses
+        locally. Storing it here is safe: Actions secrets are encrypted, masked in
+        logs, and the workflow never runs on `pull_request`, so fork PRs can't read
+        it. It stays out of the browser bundle entirely. (The ingest also redacts
+        the credentials when it logs the connection target.)
+      - `MONGODB_DB` *(optional)* — the database name if not `pricepilot`.
       - `SCRAPER_CONTACT` *(recommended)* — a real email or URL for the scraper's
-        User-Agent. Jumia's policy requires a reachable owner for volume
-        crawling; unset, it falls back to a placeholder (ok for a test run, not
-        for the live schedule). Also update the placeholder repo URL in
-        [`scripts/scrape-jumia.mjs`](scripts/scrape-jumia.mjs)'s `UA`.
+        User-Agent (see step 6).
+      Make sure Atlas Network Access permits GitHub's dynamic IPs (step 0).
 - [ ] **Curate the targets** in
       [`scripts/ingest-targets.json`](scripts/ingest-targets.json) — an array of
       `{ "q": "<search>", "category": "<slug>", "limit": <N> }`. Categories must
       be one of the 9 valid slugs. Edit these to the products you want tracked.
 - [ ] **Test it now** without waiting for the cron: *Actions → ingest → Run
       workflow* (the `workflow_dispatch` button). Watch the log for the per-target
-      tally, then confirm `price_observations` row counts rose in Supabase.
+      tally, then confirm `price_observations` document counts rose in MongoDB.
 - [ ] **Cadence** defaults to every 6 hours (`cron: '17 */6 * * *'`, UTC). To
       change it, edit the `schedule` in the workflow: `'0 * * * *'` for hourly,
       `'17 6,18 * * *'` for twice daily. Hourly mostly records identical prices

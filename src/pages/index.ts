@@ -5,4 +5,5 @@ export { BrowsePage } from './BrowsePage';
 export { ProductDetailPage } from './ProductDetailPage';
 export { WishlistPage } from './WishlistPage';
 export { SettingsPage } from './SettingsPage';
+export { AdminPage } from './AdminPage';
 export { NotFoundPage } from './NotFoundPage';

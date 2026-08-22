@@ -12,7 +12,7 @@ type Status =
 
 /**
  * "Check current price" — triggers a bounded, on-demand live price check for
- * this product via the `check-price` Edge Function, then asks the page to
+ * this product via the `/api/check-price` function, then asks the page to
  * refetch so the fresh reading flows into the best price, the comparison table,
  * and the price-history chart. Only rendered when the product has a re-fetchable
  * Jumia product link (see `liveCheckableOffer`), so it never promises a live

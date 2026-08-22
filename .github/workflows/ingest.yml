@@ -17,7 +17,7 @@ on:
   # the cron.
   workflow_dispatch:
 
-# Least privilege: this job only reads the checkout; it writes to Supabase over
+# Least privilege: this job only reads the checkout; it writes to MongoDB over
 # the network, never back to the repo.
 permissions:
   contents: read
@@ -32,7 +32,7 @@ jobs:
   ingest:
     runs-on: ubuntu-latest
     # NOTE: this workflow is intentionally NOT triggered by pull_request, so the
-    # service_role secret is never exposed to fork PRs.
+    # MONGODB_URI secret is never exposed to fork PRs.
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -51,8 +51,9 @@ jobs:
         # that doesn't exist in CI). The script reads these from process.env.
         run: node scripts/ingest-all.mjs
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          # Optional: database name (defaults to "pricepilot" when unset).
+          MONGODB_DB: ${{ secrets.MONGODB_DB }}
           # Optional: a real reachable contact for the scraper's User-Agent.
           # Falls back to a placeholder if unset (fine for testing, not volume).
           SCRAPER_CONTACT: ${{ secrets.SCRAPER_CONTACT }}

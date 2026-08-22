@@ -6,6 +6,9 @@ import { priceHistoryStats, priceStats, primaryObservationSeries } from '@/lib/p
 import { liveCheckableOffer } from '@/lib/liveCheck';
 import { useProduct } from '@/hooks/useProduct';
 import { useObservations } from '@/hooks/useObservations';
+import { useWishlist } from '@/hooks/useWishlist';
+import { useAlerts } from '@/hooks/useAlerts';
+import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -28,19 +31,16 @@ import { LiveCheckButton } from '@/components/product/LiveCheckButton';
  * from recorded `price_observations`, never invented), and wishlist/alert
  * actions.
  *
- * Reads live Supabase data: the product loads first (skeleton → content →
+ * Reads live data via the API: the product loads first (skeleton → content →
  * "not found" only after the fetch resolves), and the price-history section
  * fills in independently from its own observations query.
  */
 export function ProductDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { product, loading, error, refetch: refetchProduct } = useProduct(id);
-  // All platforms' observations; we pick a single series to chart below.
-  const {
-    observations,
-    loading: historyLoading,
-    refetch: refetchObservations,
-  } = useObservations(id);
+  const { observations, loading: historyLoading, refetch: refetchObservations } = useObservations(id);
+  const { savedIds, toggle: toggleWishlist } = useWishlist();
+  const { alerts } = useAlerts();
 
   if (loading) return <DetailSkeleton />;
   if (error) return <DetailError message={error} onRetry={refetchProduct} />;
@@ -134,7 +134,13 @@ export function ProductDetailPage() {
             )}
           </div>
 
-          <ProductActions bestPrice={lowest} />
+          <ProductActions
+            bestPrice={lowest}
+            productId={product.id}
+            isSaved={savedIds.has(product.id)}
+            onToggleWishlist={toggleWishlist}
+            alerts={alerts}
+          />
         </div>
       </div>
 
@@ -210,36 +216,63 @@ export function ProductDetailPage() {
 }
 
 /**
- * Wishlist + price-alert controls. Visually complete and interactive (local
- * toggle for review), but not yet persisted — real save/alert logic is wired to
- * auth + Supabase in Phase 6. The caption keeps that honest.
+ * Wishlist + price-alert controls. The heart button is wired to the real
+ * wishlist API via `useWishlist`; the bell opens a small modal to set a target
+ * price, persisted through `useAlerts`.
  */
-function ProductActions({ bestPrice }: { bestPrice: number }) {
-  const [saved, setSaved] = useState(false);
+function ProductActions({ bestPrice, productId, isSaved, onToggleWishlist, alerts }: { bestPrice: number; productId: string; isSaved: boolean; onToggleWishlist: (id: string) => void; alerts: Array<{ id: string; product_id: string; target_price: number; is_active: boolean }> }) {
   const [alerted, setAlerted] = useState(false);
+  const [showModal, setShowModal] = useState(false);
+  const [targetPrice, setTargetPrice] = useState('');
+  const [saving, setSaving] = useState(false);
+  const { create, remove } = useAlerts();
+
+  const existingAlert = alerts.find((a) => a.product_id === productId && a.is_active);
+
+  const handleSetAlert = async () => {
+    const price = Number(targetPrice);
+    if (!Number.isFinite(price) || price <= 0) return;
+    setSaving(true);
+    try {
+      await create(productId, price);
+      setAlerted(true);
+      setShowModal(false);
+      setTargetPrice('');
+    } catch {
+      // error handled in hook
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRemoveAlert = async () => {
+    if (!existingAlert) return;
+    await remove(existingAlert.id);
+    setAlerted(false);
+  };
 
   return (
     <div className="mt-6">
       <div className="flex flex-col gap-3 sm:flex-row">
         <Button
           type="button"
-          variant={saved ? 'primary' : 'secondary'}
+          variant={isSaved ? 'primary' : 'secondary'}
           className="w-full sm:w-auto"
-          aria-pressed={saved}
-          onClick={() => setSaved((s) => !s)}
+          aria-pressed={isSaved}
+          onClick={() => onToggleWishlist(productId)}
         >
-          <HeartIcon className="h-4 w-4" fill={saved ? 'currentColor' : 'none'} />
-          {saved ? 'Saved to wishlist' : 'Add to wishlist'}
+          <HeartIcon className="h-4 w-4" fill={isSaved ? 'currentColor' : 'none'} />
+          {isSaved ? 'Saved to wishlist' : 'Add to wishlist'}
         </Button>
         <Button
           type="button"
           variant={alerted ? 'primary' : 'secondary'}
           className="w-full sm:w-auto"
           aria-pressed={alerted}
-          onClick={() => setAlerted((a) => !a)}
+          onClick={() => setShowModal(true)}
         >
           <BellIcon className="h-4 w-4" />
-          {alerted ? `Alert set · under ${formatPrice(bestPrice)}` : 'Set price alert'}
+          {alerted ? `Alert set · under ${formatPrice(existingAlert?.target_price ?? bestPrice)}` : 'Set price alert'}
         </Button>
       </div>
       <p className="mt-2 text-xs text-muted">
@@ -252,6 +285,58 @@ function ProductActions({ bestPrice }: { bestPrice: number }) {
         </Link>{' '}
         to keep them.
       </p>
+
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <Card className="w-full max-w-sm p-6">
+            <h3 className="text-lg font-semibold">Set price alert</h3>
+            <p className="mt-1 text-sm text-muted">
+              We'll notify you when the price drops below your target.
+            </p>
+            <div className="mt-4">
+              <Input
+                label="Target price (₦)"
+                type="number"
+                value={targetPrice}
+                onChange={(e) => setTargetPrice(e.target.value)}
+                placeholder={String(bestPrice)}
+                min={1}
+                step={1}
+              />
+            </div>
+            <div className="mt-6 flex gap-3">
+              <Button
+                type="button"
+                variant="secondary"
+                className="flex-1"
+                onClick={() => {
+                  setShowModal(false);
+                  setTargetPrice('');
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                className="flex-1"
+                onClick={handleSetAlert}
+                disabled={saving}
+              >
+                {saving ? 'Saving…' : existingAlert ? 'Update alert' : 'Set alert'}
+              </Button>
+            </div>
+            {existingAlert && (
+              <button
+                type="button"
+                onClick={handleRemoveAlert}
+                className="mt-3 w-full text-center text-sm text-danger hover:underline"
+              >
+                Remove alert
+              </button>
+            )}
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

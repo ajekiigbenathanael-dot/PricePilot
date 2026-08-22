@@ -9,7 +9,7 @@
  *
  * The catalog is INJECTED by the caller (`searchProducts(query, catalog, …)`)
  * rather than imported here, so the same pure engine runs over whatever source
- * the page fetched — today the live Supabase catalog, a fixture in a test, or a
+ * the page fetched — today the live catalog, a fixture in a test, or a
  * future per-store HTTP adapter. Every return shape (PlatformQuote /
  * PlatformMiss / SearchResult) stays identical, so the UI never changes.
  */
@@ -90,7 +90,7 @@ export interface SearchOptions {
  *
  * @param rawQuery the user's search text.
  * @param catalog the products to search — injected by the caller (the live
- *   Supabase catalog in the app, a fixture in tests). This is the seam a real
+ *   catalog in the app, a fixture in tests). This is the seam a real
  *   per-store scraper drops into without changing any return shape.
  * @param options optional narrowing (e.g. a single {@link SearchOptions.category}).
  * @returns a {@link SearchResult}: one quote per platform that had a match

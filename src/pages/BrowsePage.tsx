@@ -30,7 +30,7 @@ import { PlatformSummary } from '@/components/product/PlatformSummary';
  *   overall cheapest highlighted, "No match" where a store has nothing) with the
  *   matching products as cards below.
  *
- * Both read the live Supabase catalog via `useProducts`; the page renders its
+ * Both read the live catalog via `useProducts`; the page renders its
  * own loading, error, and empty states around that data.
  */
 
@@ -64,7 +64,7 @@ export function BrowsePage() {
   const [category, setCategory] = useState<CategorySlug | 'all'>('all');
   const [sort, setSort] = useState<SortKey>('savings');
 
-  // Live catalog from Supabase — the whole catalog, filtered client-side below.
+  // Live catalog from the API — the whole catalog, filtered client-side below.
   const { products, loading, error, refetch } = useProducts();
 
   const trimmedQuery = query.trim();

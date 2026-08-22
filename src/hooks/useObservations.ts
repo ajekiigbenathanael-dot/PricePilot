@@ -14,7 +14,7 @@ export interface UseObservationsResult {
 }
 
 /**
- * Load a product's real, append-only price observations from Supabase — the
+ * Load a product's real, append-only price observations via the API — the
  * genuine price history behind the sparkline and movement badge. Separate from
  * {@link useProduct} on purpose: the product renders as soon as it arrives, and
  * this secondary history section fills in on its own (with its own loading state)
