@@ -24,7 +24,15 @@ function clientPromise(): Promise<MongoClient> {
   const uri = process.env.MONGODB_URI;
   if (!uri) throw new Error('Server is missing MONGODB_URI.');
   if (!store.promise) {
-    store.promise = new MongoClient(uri).connect();
+    // Fail fast with a clear error instead of hanging on a slow/flaky network:
+    // the driver default server-selection wait is 30s, which blows past Vercel's
+    // function timeout and shows up as a dead page. Bound it, and keep the pool
+    // small since serverless instances each hold their own.
+    store.promise = new MongoClient(uri, {
+      serverSelectionTimeoutMS: 5000,
+      connectTimeoutMS: 10000,
+      maxPoolSize: 10,
+    }).connect();
   }
   return store.promise;
 }
