@@ -31,6 +31,7 @@ interface VercelLikeRes {
   json(data: unknown): VercelLikeRes;
   send(data: unknown): VercelLikeRes;
   setHeader(name: string, value: string | string[]): VercelLikeRes;
+  appendHeader(name: string, value: string | string[]): VercelLikeRes;
   getHeader(name: string): string | undefined;
 }
 
@@ -91,24 +92,39 @@ function safeJsonParse(raw: string): unknown {
   }
 }
 
-/** Adapt a Node ServerResponse to the `res.status().json()` API the handlers use. */
+/**
+ * Adapt a Node ServerResponse to the `res.status().json()` API the handlers use.
+ *
+ * The terminal methods are guarded against a response that has already ended:
+ * a handler bug that sends twice (e.g. a fall-through after an auth 401) must NOT
+ * throw ERR_STREAM_WRITE_AFTER_END, because in this in-process dev adapter that
+ * surfaces as an unhandled 'error' event and crashes the whole dev server. Real
+ * Vercel isolates each invocation; we mimic that leniency by ignoring the extra
+ * write and keeping the first (correct) response.
+ */
 function makeVercelRes(res: ServerResponse): VercelLikeRes {
   const vRes: VercelLikeRes = {
     status(code) {
-      res.statusCode = code;
+      if (!res.headersSent) res.statusCode = code;
       return vRes;
     },
     json(data) {
+      if (res.writableEnded) return vRes;
       if (!res.getHeader('content-type')) res.setHeader('content-type', 'application/json');
       res.end(JSON.stringify(data));
       return vRes;
     },
     send(data) {
+      if (res.writableEnded) return vRes;
       res.end(typeof data === 'string' ? data : JSON.stringify(data));
       return vRes;
     },
     setHeader(name, value) {
-      res.setHeader(name, value);
+      if (!res.headersSent) res.setHeader(name, value);
+      return vRes;
+    },
+    appendHeader(name, value) {
+      if (!res.headersSent) res.appendHeader(name, value);
       return vRes;
     },
     getHeader(name) {
@@ -160,11 +176,15 @@ export function apiDevServer(mode: string): Plugin {
           await handler(vReq, makeVercelRes(res));
         } catch (err) {
           // Surface the error as JSON so the app's `{ error }` handling still works.
-          res.statusCode = 500;
-          res.setHeader('content-type', 'application/json');
-          res.end(
-            JSON.stringify({ error: err instanceof Error ? err.message : 'Dev API error.' }),
-          );
+          // Guard against a handler that already responded before throwing: writing
+          // again here would throw write-after-end and crash the dev server.
+          if (!res.writableEnded) {
+            res.statusCode = 500;
+            if (!res.headersSent) res.setHeader('content-type', 'application/json');
+            res.end(
+              JSON.stringify({ error: err instanceof Error ? err.message : 'Dev API error.' }),
+            );
+          }
         }
       });
     },

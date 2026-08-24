@@ -31,15 +31,15 @@ async function requireSession(req: VercelRequest, res: VercelResponse) {
   const cookie = typeof req.headers.cookie === 'string' ? req.headers.cookie : '';
   const sessionToken = parseCookie(cookie, 'session');
   if (!sessionToken) {
-    return res.status(401).json({ error: 'Not authenticated.' });
+    return { error: res.status(401).json({ error: 'Not authenticated.' }) };
   }
   const db = await getDb();
   const sessions = db.collection<SessionDoc>('sessions');
   const session = await sessions.findOne({ _id: sessionToken });
-  if (!session) return res.status(401).json({ error: 'Not authenticated.' });
+  if (!session) return { error: res.status(401).json({ error: 'Not authenticated.' }) };
   if (new Date(session.expires_at) < new Date()) {
     await sessions.deleteOne({ _id: sessionToken });
-    return res.status(401).json({ error: 'Session expired.' });
+    return { error: res.status(401).json({ error: 'Session expired.' }) };
   }
   return { db, userId: session.user_id };
 }
@@ -48,7 +48,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'GET') {
     try {
       const sessionResult = await requireSession(req, res);
-      if ('error' in sessionResult) return sessionResult;
+      if ('error' in sessionResult) return sessionResult.error;
       const { db, userId } = sessionResult as { db: ReturnType<typeof getDb> extends Promise<infer D> ? D : never; userId: string };
 
       const wishlist = db.collection<WishlistDoc>('wishlist');
@@ -79,7 +79,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
       const sessionResult = await requireSession(req, res);
-      if ('error' in sessionResult) return sessionResult;
+      if ('error' in sessionResult) return sessionResult.error;
       const { db, userId } = sessionResult as { db: ReturnType<typeof getDb> extends Promise<infer D> ? D : never; userId: string };
 
       const wishlist = db.collection<WishlistDoc>('wishlist');
