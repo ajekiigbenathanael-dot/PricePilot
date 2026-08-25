@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState, useEffect } from 'react';
+import { useMemo, useRef, useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type { PlatformMiss, Product } from '@/types';
 import { CATEGORIES, categoryLabel, type CategorySlug } from '@/lib/constants';
 import { priceStats } from '@/lib/pricing';
@@ -6,10 +7,12 @@ import { searchProducts } from '@/lib/search';
 import { invokeLiveSearch } from '@/lib/liveSearch';
 import type { LiveSearchResult } from '@/types';
 import { useProducts } from '@/hooks/useProducts';
+import { useRecentlyViewed } from '@/hooks/useRecentlyViewed';
 import { Button } from '@/components/ui/Button';
 import { Container } from '@/components/ui/Container';
 import {
   AlertTriangleIcon,
+  ClockIcon,
   ExternalLinkIcon,
   SearchIcon,
   SearchOffIcon,
@@ -60,12 +63,36 @@ function sortProducts(products: Product[], sort: SortKey): Product[] {
 }
 
 export function BrowsePage() {
-  const [query, setQuery] = useState('');
-  const [category, setCategory] = useState<CategorySlug | 'all'>('all');
-  const [sort, setSort] = useState<SortKey>('savings');
+  // State is synced to the URL so back/forward/refresh preserve the user's
+  // search, category, and sort — no lost state when they navigate away.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const query = searchParams.get('q') ?? '';
+  const category = (searchParams.get('category') ?? 'all') as CategorySlug | 'all';
+  const sort = (searchParams.get('sort') ?? 'savings') as SortKey;
+
+  const updateParams = useCallback(
+    (overrides: Partial<Record<'q' | 'category' | 'sort', string>>) => {
+      setSearchParams(
+        { q: query, category, sort, ...overrides },
+        { replace: true },
+      );
+    },
+    [query, category, sort, setSearchParams],
+  );
+
+  const setQuery = useCallback((value: string) => updateParams({ q: value }), [updateParams]);
+  const setCategory = useCallback(
+    (value: CategorySlug | 'all') => updateParams({ category: value }),
+    [updateParams],
+  );
+  const setSort = useCallback((value: SortKey) => updateParams({ sort: value }), [updateParams]);
 
   // Live catalog from the API — the whole catalog, filtered client-side below.
   const { products, loading, error, refetch } = useProducts();
+
+  // Products this visitor recently opened (localStorage) — surfaced as a rail in
+  // browse mode so returning users can jump back to what they were comparing.
+  const { products: recentProducts } = useRecentlyViewed();
 
   const trimmedQuery = query.trim();
   const isSearching = trimmedQuery !== '';
@@ -83,6 +110,10 @@ export function BrowsePage() {
   const [liveLoading, setLiveLoading] = useState(false);
   const [liveError, setLiveError] = useState<string | null>(null);
   const [liveQueries, setLiveQueries] = useState<Set<string>>(new Set());
+  // Set when the user explicitly dismisses the live results for the current
+  // query, so the auto-trigger below doesn't immediately re-fetch them. Cleared
+  // by the reset effect whenever the query or category changes.
+  const [liveDismissed, setLiveDismissed] = useState(false);
   const liveTimeoutRef = useRef<number | null>(null);
   const isMountedRef = useRef(true);
 
@@ -94,6 +125,19 @@ export function BrowsePage() {
     };
   }, []);
 
+  // A live search is keyed by its (query, category) pair; when either changes,
+  // clear the previous attempt. Without this, `liveResult` stays set after the
+  // first successful live search, so the `!liveResult` guard in
+  // `shouldLiveSearch` below is permanently false and no later query ever
+  // triggers another live search — and a stale result/error would otherwise
+  // linger on screen under the new query. Also clears any manual dismissal so a
+  // genuinely new (or returning) query can live-search again.
+  useEffect(() => {
+    setLiveResult(null);
+    setLiveError(null);
+    setLiveDismissed(false);
+  }, [trimmedQuery, category]);
+
   const hasLocalMatches = searchResult && searchResult.products.length > 0;
   const shouldLiveSearch =
     isSearching &&
@@ -101,6 +145,7 @@ export function BrowsePage() {
     !error &&
     !liveLoading &&
     !liveResult &&
+    !liveDismissed &&
     !hasLocalMatches &&
     !liveQueries.has(trimmedQuery);
 
@@ -152,8 +197,7 @@ export function BrowsePage() {
 
   const hasFilters = isSearching || category !== 'all';
   const clearFilters = () => {
-    setQuery('');
-    setCategory('all');
+    setSearchParams({ q: '', category: 'all', sort }, { replace: true });
   };
 
   // Only show the result-count row + filtered body once there's a loaded,
@@ -236,6 +280,22 @@ export function BrowsePage() {
         ))}
       </div>
 
+      {/* Recently viewed — a quick way back to products just compared. Shown in
+          browse mode only (hidden while searching) once a catalog is loaded. */}
+      {!isSearching && hasCatalog && recentProducts.length > 0 && (
+        <section className="mt-8">
+          <div className="mb-4 flex items-center gap-2">
+            <ClockIcon className="h-4 w-4 text-muted" />
+            <h2 className="font-display text-lg font-bold text-ink sm:text-xl">Recently viewed</h2>
+          </div>
+          <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4">
+            {recentProducts.slice(0, 4).map((product) => (
+              <ProductCard key={product.id} product={product} />
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Status row: result count + clear (only once a catalog is loaded) */}
       {hasCatalog && (
         <div className="mt-6 flex items-center justify-between gap-4">
@@ -312,6 +372,23 @@ export function BrowsePage() {
                   <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
                   Live
                 </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLiveResult(null);
+                    setLiveDismissed(true);
+                    setLiveQueries((prev) => {
+                      const next = new Set(prev);
+                      next.delete(trimmedQuery);
+                      return next;
+                    });
+                  }}
+                  aria-label="Clear live results"
+                  className="ml-auto inline-flex shrink-0 items-center gap-1 text-sm font-medium text-primary hover:text-primary-hover"
+                >
+                  <XIcon className="h-4 w-4" />
+                  Clear results
+                </button>
               </div>
               <p className="mt-1 text-sm text-muted">
                 Prices pulled directly from Jumia just now. Added to our catalog for future searches.

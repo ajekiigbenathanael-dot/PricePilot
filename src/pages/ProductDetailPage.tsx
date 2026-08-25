@@ -1,13 +1,16 @@
-import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useState, useEffect, useRef } from 'react';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { ROUTES, categoryLabel, platformLabel } from '@/lib/constants';
 import { formatPrice } from '@/lib/utils';
 import { priceHistoryStats, priceStats, primaryObservationSeries } from '@/lib/pricing';
 import { liveCheckableOffer } from '@/lib/liveCheck';
+import { toast } from '@/hooks/useToast';
+import { recordView } from '@/hooks/useRecentlyViewed';
 import { useProduct } from '@/hooks/useProduct';
 import { useObservations } from '@/hooks/useObservations';
 import { useWishlist } from '@/hooks/useWishlist';
 import { useAlerts } from '@/hooks/useAlerts';
+import { useAuth } from '@/contexts/useAuth';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -40,7 +43,13 @@ export function ProductDetailPage() {
   const { product, loading, error, refetch: refetchProduct } = useProduct(id);
   const { observations, loading: historyLoading, refetch: refetchObservations } = useObservations(id);
   const { savedIds, toggle: toggleWishlist } = useWishlist();
-  const { alerts } = useAlerts();
+
+  // Record this view in "recently viewed" (localStorage).
+  useEffect(() => {
+    if (product?.id) {
+      recordView(product.id);
+    }
+  }, [product?.id]);
 
   if (loading) return <DetailSkeleton />;
   if (error) return <DetailError message={error} onRetry={refetchProduct} />;
@@ -139,7 +148,6 @@ export function ProductDetailPage() {
             productId={product.id}
             isSaved={savedIds.has(product.id)}
             onToggleWishlist={toggleWishlist}
-            alerts={alerts}
           />
         </div>
       </div>
@@ -216,18 +224,38 @@ export function ProductDetailPage() {
 }
 
 /**
- * Wishlist + price-alert controls. The heart button is wired to the real
- * wishlist API via `useWishlist`; the bell opens a small modal to set a target
- * price, persisted through `useAlerts`.
+ * Wishlist + price-alert controls — real, persisted actions for a signed-in
+ * user. The heart toggles the wishlist via `useWishlist` (owned by the page and
+ * passed in); the bell opens a modal that creates/removes a price alert via
+ * `useAlerts`. The "alert set" state is derived from the persisted alert (not
+ * local component state), so it survives a reload. Signed-out users see a prompt
+ * to create an account, and a click routes them to sign up rather than firing a
+ * request that can't succeed.
  */
-function ProductActions({ bestPrice, productId, isSaved, onToggleWishlist, alerts }: { bestPrice: number; productId: string; isSaved: boolean; onToggleWishlist: (id: string) => void; alerts: Array<{ id: string; product_id: string; target_price: number; is_active: boolean }> }) {
-  const [alerted, setAlerted] = useState(false);
+function ProductActions({
+  bestPrice,
+  productId,
+  isSaved,
+  onToggleWishlist,
+}: {
+  bestPrice: number;
+  productId: string;
+  isSaved: boolean;
+  onToggleWishlist: (id: string) => void;
+}) {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const { alerts, create, remove } = useAlerts();
   const [showModal, setShowModal] = useState(false);
   const [targetPrice, setTargetPrice] = useState('');
   const [saving, setSaving] = useState(false);
-  const { create, remove } = useAlerts();
+  const modalRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
+  // "Alert set" is derived from the persisted alert, so a reload reflects the
+  // real, saved state instead of a local toggle that resets on every mount.
   const existingAlert = alerts.find((a) => a.product_id === productId && a.is_active);
+  const hasAlert = !!existingAlert;
 
   const handleSetAlert = async () => {
     const price = Number(targetPrice);
@@ -235,7 +263,7 @@ function ProductActions({ bestPrice, productId, isSaved, onToggleWishlist, alert
     setSaving(true);
     try {
       await create(productId, price);
-      setAlerted(true);
+      toast.success(`Price alert set for ${formatPrice(price)}.`);
       setShowModal(false);
       setTargetPrice('');
     } catch {
@@ -248,8 +276,71 @@ function ProductActions({ bestPrice, productId, isSaved, onToggleWishlist, alert
   const handleRemoveAlert = async () => {
     if (!existingAlert) return;
     await remove(existingAlert.id);
-    setAlerted(false);
+    toast.info('Price alert removed.');
+    closeModal();
   };
+
+  const handleToggleWishlist = async () => {
+    if (!user) {
+      navigate(ROUTES.signup);
+      return;
+    }
+    await onToggleWishlist(productId);
+    if (isSaved) {
+      toast.info('Removed from wishlist.');
+    } else {
+      toast.success('Added to wishlist.');
+    }
+  };
+
+  const handleAlertClick = () => {
+    if (!user) {
+      navigate(ROUTES.signup);
+      return;
+    }
+    setShowModal(true);
+  };
+
+  const closeModal = () => {
+    setShowModal(false);
+    setTargetPrice('');
+    setTimeout(() => triggerRef.current?.focus(), 0);
+  };
+
+  // Trap focus within the modal + close on Escape.
+  useEffect(() => {
+    if (!showModal) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeModal();
+        return;
+      }
+
+      if (e.key === 'Tab' && modalRef.current) {
+        const focusable = modalRef.current.querySelectorAll<
+          HTMLElement
+        >(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        );
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault();
+            last?.focus();
+          }
+        } else if (document.activeElement === last) {
+          e.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [showModal]);
 
   return (
     <div className="mt-6">
@@ -259,38 +350,49 @@ function ProductActions({ bestPrice, productId, isSaved, onToggleWishlist, alert
           variant={isSaved ? 'primary' : 'secondary'}
           className="w-full sm:w-auto"
           aria-pressed={isSaved}
-          onClick={() => onToggleWishlist(productId)}
+          onClick={handleToggleWishlist}
         >
           <HeartIcon className="h-4 w-4" fill={isSaved ? 'currentColor' : 'none'} />
           {isSaved ? 'Saved to wishlist' : 'Add to wishlist'}
         </Button>
         <Button
           type="button"
-          variant={alerted ? 'primary' : 'secondary'}
+          variant={hasAlert ? 'primary' : 'secondary'}
           className="w-full sm:w-auto"
-          aria-pressed={alerted}
-          onClick={() => setShowModal(true)}
+          aria-pressed={hasAlert}
+          ref={triggerRef}
+          onClick={handleAlertClick}
         >
           <BellIcon className="h-4 w-4" />
-          {alerted ? `Alert set · under ${formatPrice(existingAlert?.target_price ?? bestPrice)}` : 'Set price alert'}
+          {hasAlert
+            ? `Alert set · under ${formatPrice(existingAlert?.target_price ?? bestPrice)}`
+            : 'Set price alert'}
         </Button>
       </div>
-      <p className="mt-2 text-xs text-muted">
-        Wishlist and price alerts save to your account —{' '}
-        <Link
-          to={ROUTES.signup}
-          className="font-medium text-primary hover:text-primary-hover"
-        >
-          create a free account
-        </Link>{' '}
-        to keep them.
-      </p>
+      {!user && (
+        <p className="mt-2 text-xs text-muted">
+          Wishlist and price alerts save to your account —{' '}
+          <Link
+            to={ROUTES.signup}
+            className="font-medium text-primary hover:text-primary-hover"
+          >
+            create a free account
+          </Link>{' '}
+          to keep them.
+        </p>
+      )}
 
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <Card className="w-full max-w-sm p-6">
-            <h3 className="text-lg font-semibold">Set price alert</h3>
-            <p className="mt-1 text-sm text-muted">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="alert-modal-title"
+          aria-describedby="alert-modal-desc"
+        >
+          <Card ref={modalRef} className="w-full max-w-sm p-6">
+            <h3 id="alert-modal-title" className="text-lg font-semibold">Set price alert</h3>
+            <p id="alert-modal-desc" className="mt-1 text-sm text-muted">
               We'll notify you when the price drops below your target.
             </p>
             <div className="mt-4">
@@ -302,6 +404,7 @@ function ProductActions({ bestPrice, productId, isSaved, onToggleWishlist, alert
                 placeholder={String(bestPrice)}
                 min={1}
                 step={1}
+                autoFocus
               />
             </div>
             <div className="mt-6 flex gap-3">
@@ -309,10 +412,7 @@ function ProductActions({ bestPrice, productId, isSaved, onToggleWishlist, alert
                 type="button"
                 variant="secondary"
                 className="flex-1"
-                onClick={() => {
-                  setShowModal(false);
-                  setTargetPrice('');
-                }}
+                onClick={closeModal}
               >
                 Cancel
               </Button>

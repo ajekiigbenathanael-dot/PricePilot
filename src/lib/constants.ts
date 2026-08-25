@@ -9,6 +9,7 @@ export const ROUTES = {
   login: '/login',
   signup: '/signup',
   browse: '/browse',
+  dashboard: '/dashboard',
   product: '/product/:id',
   wishlist: '/wishlist',
   settings: '/settings',

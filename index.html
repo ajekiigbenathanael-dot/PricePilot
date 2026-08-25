@@ -21,6 +21,18 @@
     <title>PricePilot . Compare prices . Shop smarter</title>
   </head>
   <body>
+    <!-- Apply saved theme before React loads to prevent FOUT -->
+    <script>
+      (function () {
+        var theme = localStorage.getItem('pricepilot-theme');
+        var isDark;
+        if (theme === 'dark') isDark = true;
+        else if (theme === 'light') isDark = false;
+        else isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (isDark) document.documentElement.classList.add('dark');
+      })();
+    </script>
+
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

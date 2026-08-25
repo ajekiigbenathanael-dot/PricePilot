@@ -1,3 +1,4 @@
+import { forwardRef } from 'react';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
@@ -18,7 +19,6 @@ const variants: Record<Variant, string> = {
   primary: 'bg-primary text-white hover:bg-primary-hover',
   secondary: 'bg-surface text-ink border border-border hover:bg-bg',
   ghost: 'bg-transparent text-ink hover:bg-border/50',
-  // Red is reserved strictly for destructive actions.
   danger: 'bg-danger text-white hover:brightness-95',
 };
 
@@ -29,16 +29,15 @@ const sizes: Record<Size, string> = {
 };
 
 /** Primary interactive control. Defaults to the brand primary variant. */
-export function Button({
-  variant = 'primary',
-  size = 'md',
-  className,
-  children,
-  ...props
-}: ButtonProps) {
-  return (
-    <button className={cn(base, variants[variant], sizes[size], className)} {...props}>
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
+  ({ variant = 'primary', size = 'md', className, children, ...props }, ref) => (
+    <button
+      ref={ref}
+      className={cn(base, variants[variant], sizes[size], className)}
+      {...props}
+    >
       {children}
     </button>
-  );
-}
+  ),
+);
+Button.displayName = 'Button';

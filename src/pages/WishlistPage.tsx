@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { ROUTES } from '@/lib/constants';
+import { toast } from '@/hooks/useToast';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -49,7 +50,10 @@ export function WishlistPage() {
                     <ProductCard product={product} />
                     <button
                       type="button"
-                      onClick={() => removeWishlist(product.id)}
+                      onClick={async () => {
+                        await removeWishlist(product.id);
+                        toast.info(`Removed ${product.title} from wishlist.`);
+                      }}
                       className="absolute right-3 top-3 rounded-full bg-surface/90 p-2 text-muted shadow-sm hover:text-danger"
                       aria-label={`Remove ${product.title} from wishlist`}
                     >
@@ -105,7 +109,10 @@ export function WishlistPage() {
                       </span>
                       <button
                         type="button"
-                        onClick={() => removeAlert(alert.id)}
+                        onClick={async () => {
+                          await removeAlert(alert.id);
+                          toast.info('Price alert removed.');
+                        }}
                         className="text-xs font-medium text-danger hover:underline"
                       >
                         Remove

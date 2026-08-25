@@ -4,7 +4,22 @@
 
 @layer base {
   :root {
-    color-scheme: light;
+    color-scheme: light dark;
+
+    /* Light theme neutrals */
+    --color-bg: 248 250 252;
+    --color-surface: 255 255 255;
+    --color-border: 234 236 240;
+    --color-text: 15 23 42;
+    --color-muted: 100 116 128;
+  }
+
+  .dark {
+    --color-bg: 15 23 42;
+    --color-surface: 25 29 43;
+    --color-border: 33 37 44;
+    --color-text: 248 250 252;
+    --color-muted: 148 163 184;
   }
 
   html {

@@ -43,7 +43,7 @@ export function ProductCard({ product }: { product: Product }) {
           {/* Live price-change row — reserved height so event-less cards stay
               the same height as cards that have a ticker. */}
           <div className="mb-1.5 min-h-[1.25rem]">
-            <LivePriceTicker events={product.price_events} />
+            <LivePriceTicker events={product.price_events ?? []} />
           </div>
 
           <span className="text-xs font-semibold uppercase tracking-wide text-muted">

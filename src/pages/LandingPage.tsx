@@ -1,9 +1,10 @@
 import { useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import type { Product } from '@/types';
 import { CATEGORIES, PLATFORMS, ROUTES } from '@/lib/constants';
 import { priceStats } from '@/lib/pricing';
 import { useProducts } from '@/hooks/useProducts';
+import { useAuth } from '@/contexts/useAuth';
 import { Button } from '@/components/ui/Button';
 import { Container } from '@/components/ui/Container';
 import { TypewriterHeadline } from '@/components/ui/TypewriterHeadline';
@@ -81,12 +82,20 @@ export function LandingPage() {
   // derived from real products (never invented), with skeletons while it loads
   // and a graceful "prices on the way" state before the first ingest.
   const { products, loading } = useProducts();
+  const { user, loading: authLoading } = useAuth();
 
   const heroProduct = useMemo(() => pickHeroProduct(products), [products]);
   const trendingDeals = useMemo(
     () => pickTrendingDeals(products, heroProduct?.id),
     [products, heroProduct],
   );
+
+  // Redirect logged-in users to their dashboard instead of showing the marketing
+  // page with "Create free account" CTAs. (Placed after hooks to satisfy
+  // Rules of Hooks.)
+  if (!authLoading && user) {
+    return <Navigate to={ROUTES.dashboard} replace />;
+  }
 
   return (
     <>

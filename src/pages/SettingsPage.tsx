@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/useAuth';
+import { toast } from '@/hooks/useToast';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -11,7 +12,6 @@ type Tab = 'profile' | 'password' | 'notifications';
 export function SettingsPage() {
   const { user, loading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState<Tab>('profile');
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   if (authLoading) {
     return (
@@ -36,18 +36,6 @@ export function SettingsPage() {
         description="Manage your account and preferences."
       />
 
-      {message && (
-        <Card
-          className={`border p-4 text-sm ${
-            message.type === 'success'
-              ? 'border-savings/30 bg-savings/5 text-savings'
-              : 'border-danger/30 bg-danger/5 text-danger'
-          }`}
-        >
-          {message.text}
-        </Card>
-      )}
-
       <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
         <Card className="p-1">
           <nav className="flex flex-col gap-0.5">
@@ -64,15 +52,9 @@ export function SettingsPage() {
         </Card>
 
         <div>
-          {activeTab === 'profile' && (
-            <ProfileSection user={user} onMessage={setMessage} />
-          )}
-          {activeTab === 'password' && (
-            <PasswordSection onMessage={setMessage} />
-          )}
-          {activeTab === 'notifications' && (
-            <NotificationsSection onMessage={setMessage} />
-          )}
+          {activeTab === 'profile' && <ProfileSection user={user} />}
+          {activeTab === 'password' && <PasswordSection />}
+          {activeTab === 'notifications' && <NotificationsSection />}
         </div>
       </div>
     </div>
@@ -97,28 +79,30 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
 
 function ProfileSection({
   user,
-  onMessage,
 }: {
   user: { id: string; email: string; display_name: string | null; created_at: string };
-  onMessage: (msg: { type: 'success' | 'error'; text: string }) => void;
 }) {
   const [displayName, setDisplayName] = useState(user.display_name ?? '');
   const [saving, setSaving] = useState(false);
   const { refresh } = useAuth();
 
+  // Sync local state when the prop changes (e.g. after refresh() re-fetches the user).
+  useEffect(() => {
+    setDisplayName(user.display_name ?? '');
+  }, [user.display_name]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
-    onMessage({ type: 'success', text: '' });
     try {
       await apiFetch('/api/auth/profile', {
         method: 'PATCH',
         json: { display_name: displayName },
       });
-      onMessage({ type: 'success', text: 'Profile updated successfully.' });
+      toast.success('Profile updated successfully.');
       await refresh();
     } catch (err) {
-      onMessage({ type: 'error', text: err instanceof Error ? err.message : 'Failed to update profile.' });
+      toast.error(err instanceof Error ? err.message : 'Failed to update profile.');
     } finally {
       setSaving(false);
     }
@@ -152,7 +136,7 @@ function ProfileSection({
   );
 }
 
-function PasswordSection({ onMessage }: { onMessage: (msg: { type: 'success' | 'error'; text: string }) => void }) {
+function PasswordSection() {
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -161,7 +145,7 @@ function PasswordSection({ onMessage }: { onMessage: (msg: { type: 'success' | '
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (next !== confirm) {
-      onMessage({ type: 'error', text: 'New passwords do not match.' });
+      toast.error('New passwords do not match.');
       return;
     }
     setSaving(true);
@@ -170,12 +154,12 @@ function PasswordSection({ onMessage }: { onMessage: (msg: { type: 'success' | '
         method: 'POST',
         json: { current_password: current, new_password: next },
       });
-      onMessage({ type: 'success', text: 'Password changed successfully.' });
+      toast.success('Password changed successfully.');
       setCurrent('');
       setNext('');
       setConfirm('');
     } catch (err) {
-      onMessage({ type: 'error', text: err instanceof Error ? err.message : 'Failed to change password.' });
+      toast.error(err instanceof Error ? err.message : 'Failed to change password.');
     } finally {
       setSaving(false);
     }
@@ -194,6 +178,7 @@ function PasswordSection({ onMessage }: { onMessage: (msg: { type: 'success' | '
           onChange={(e) => setCurrent(e.target.value)}
           required
           autoComplete="current-password"
+          showPasswordToggle
         />
         <Input
           label="New password"
@@ -203,6 +188,7 @@ function PasswordSection({ onMessage }: { onMessage: (msg: { type: 'success' | '
           required
           minLength={8}
           autoComplete="new-password"
+          showPasswordToggle
         />
         <Input
           label="Confirm new password"
@@ -212,6 +198,7 @@ function PasswordSection({ onMessage }: { onMessage: (msg: { type: 'success' | '
           required
           minLength={8}
           autoComplete="new-password"
+          showPasswordToggle
         />
         <Button type="submit" disabled={saving}>
           {saving ? 'Updating…' : 'Update password'}
@@ -221,7 +208,7 @@ function PasswordSection({ onMessage }: { onMessage: (msg: { type: 'success' | '
   );
 }
 
-function NotificationsSection({ onMessage }: { onMessage: (msg: { type: 'success' | 'error'; text: string }) => void }) {
+function NotificationsSection() {
   const [emailAlerts, setEmailAlerts] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -233,9 +220,9 @@ function NotificationsSection({ onMessage }: { onMessage: (msg: { type: 'success
         method: 'PATCH',
         json: { email_alerts: emailAlerts },
       });
-      onMessage({ type: 'success', text: 'Notification preferences saved.' });
+      toast.success('Notification preferences saved.');
     } catch (err) {
-      onMessage({ type: 'error', text: err instanceof Error ? err.message : 'Failed to save preferences.' });
+      toast.error(err instanceof Error ? err.message : 'Failed to save preferences.');
     } finally {
       setSaving(false);
     }
