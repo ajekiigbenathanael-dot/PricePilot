@@ -1,8 +1,8 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  readonly VITE_SUPABASE_URL: string;
-  readonly VITE_SUPABASE_ANON_KEY: string;
+  /** Optional API origin for the browser client. Default: same-origin `/api`. */
+  readonly VITE_API_BASE_URL?: string;
 }
 
 interface ImportMeta {

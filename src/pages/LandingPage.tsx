@@ -1,9 +1,10 @@
 import { useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import type { Product } from '@/types';
 import { CATEGORIES, PLATFORMS, ROUTES } from '@/lib/constants';
 import { priceStats } from '@/lib/pricing';
 import { useProducts } from '@/hooks/useProducts';
+import { useAuth } from '@/contexts/useAuth';
 import { Button } from '@/components/ui/Button';
 import { Container } from '@/components/ui/Container';
 import { TypewriterHeadline } from '@/components/ui/TypewriterHeadline';
@@ -60,7 +61,7 @@ const HOW_IT_WORKS = [
   {
     icon: SearchIcon,
     title: 'Search anything',
-    body: 'From calculators to comforters — every product students actually buy, in one place.',
+    body: 'From calculators to comforters: every product students actually buy, in one place.',
   },
   {
     icon: TagIcon,
@@ -77,16 +78,24 @@ const HOW_IT_WORKS = [
 const TRUST_POINTS = ['Free to use', 'No account needed to browse', 'Unbiased — never sponsored'];
 
 export function LandingPage() {
-  // Live catalog from Supabase — the hero comparison and trending deals are both
+  // Live catalog from the API — the hero comparison and trending deals are both
   // derived from real products (never invented), with skeletons while it loads
   // and a graceful "prices on the way" state before the first ingest.
   const { products, loading } = useProducts();
+  const { user, loading: authLoading } = useAuth();
 
   const heroProduct = useMemo(() => pickHeroProduct(products), [products]);
   const trendingDeals = useMemo(
     () => pickTrendingDeals(products, heroProduct?.id),
     [products, heroProduct],
   );
+
+  // Redirect logged-in users to their dashboard instead of showing the marketing
+  // page with "Create free account" CTAs. (Placed after hooks to satisfy
+  // Rules of Hooks.)
+  if (!authLoading && user) {
+    return <Navigate to={ROUTES.dashboard} replace />;
+  }
 
   return (
     <>
@@ -118,7 +127,7 @@ export function LandingPage() {
                 <b className="font-semibold text-ink">
                   cheapest prices across Jumia, Konga, Slot, PayPorte &amp; Temu
                 </b>{' '}
-                — electronics, textbooks, backpacks, dorm gear and beyond. Track any product
+                on electronics, textbooks, backpacks, dorm gear and beyond. Track any product
                 and get alerted the moment it drops.
               </p>
 
@@ -146,7 +155,7 @@ export function LandingPage() {
               </ul>
             </div>
 
-            {/* Value-prop visual — live comparison, skeleton, or graceful placeholder */}
+            {/* Value-prop visual  live comparison, skeleton, or graceful placeholder */}
             <div className="lg:pl-6">
               {loading ? (
                 <HeroComparisonSkeleton />
@@ -287,6 +296,7 @@ export function LandingPage() {
               <Link to={ROUTES.signup}>
                 <Button
                   size="lg"
+                  variant="secondary"
                   className="w-full bg-white text-primary hover:bg-white/90 sm:w-auto"
                 >
                   Create free account
@@ -383,7 +393,7 @@ function HeroComparisonPlaceholder() {
       </div>
 
       <div className="border-t border-border bg-bg px-5 py-4 text-sm leading-relaxed text-muted">
-        We’re pulling live prices from every store now — real comparisons show up here the
+        We’re pulling live prices from every store now  real comparisons show up here the
         moment they land.
       </div>
     </div>
@@ -417,7 +427,7 @@ function TrendingEmpty() {
       </div>
       <h3 className="mt-4 font-display text-lg font-bold text-ink">Deals are on the way</h3>
       <p className="mt-1 max-w-sm text-sm text-muted">
-        We only feature real prices pulled live from the stores. We’re adding them now —
+        We only feature real prices pulled live from the stores. We’re adding them now 
         check back soon.
       </p>
     </div>

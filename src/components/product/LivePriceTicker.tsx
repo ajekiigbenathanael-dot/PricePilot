@@ -33,27 +33,28 @@ export function LivePriceTicker({
   events,
   className,
 }: {
-  events: PriceEvent[];
+  events?: PriceEvent[];
   className?: string;
 }) {
+  const safeEvents = events ?? [];
   const reducedMotion = usePrefersReducedMotion();
   const [index, setIndex] = useState(0);
 
-  const canRotate = !reducedMotion && events.length > 1;
+  const canRotate = !reducedMotion && safeEvents.length > 1;
 
   useEffect(() => {
     if (!canRotate) return;
     const id = window.setInterval(
-      () => setIndex((i) => (i + 1) % events.length),
+      () => setIndex((i) => (i + 1) % safeEvents.length),
       ROTATE_MS,
     );
     return () => window.clearInterval(id);
-  }, [canRotate, events.length]);
+  }, [canRotate, safeEvents.length]);
 
-  if (events.length === 0) return null;
+  if (safeEvents.length === 0) return null;
 
   // Guard the index in case `events` shrank between renders.
-  const event = events[index % events.length];
+  const event = safeEvents[index % safeEvents.length];
   const isDown = event.direction === 'down';
   const Icon = isDown ? TrendDownIcon : TrendUpIcon;
 

@@ -1,13 +1,14 @@
 /**
- * Shared domain types — mirror the Supabase schema in `supabase/migrations`.
- * Maintained by hand for now; can be swapped for generated types later via
- * `supabase gen types typescript`.
+ * Shared domain types — the JSON shapes the app works with. The catalog types
+ * mirror what the `/api` layer returns from the MongoDB `products` and
+ * `price_observations` collections; the account types are placeholders for
+ * features not yet wired up. Maintained by hand.
  */
 import type { CategorySlug, PlatformSlug } from '@/lib/constants';
 
-/** One authenticated user's profile row (1:1 with auth.users). */
+/** One authenticated user's profile row (1:1 with the auth user). */
 export interface Profile {
-  id: string; // == auth.users.id
+  id: string; // == the auth user's id
   display_name: string | null;
   avatar_url: string | null;
   created_at: string;
@@ -87,9 +88,17 @@ export interface Product {
   price_events: PriceEvent[];
   created_at: string;
   updated_at: string;
+  /**
+   * True when the CURRENT signed-in user is the one who first added this product
+   * to the catalog via their own live search. Server-derived (never the raw
+   * adder id, which is an email) so it can gate the "remove" control. The delete
+   * endpoint re-checks ownership regardless, so this is a UI hint, not the
+   * authority. False for anonymous visitors and for cron-ingested products.
+   */
+  added_by_me: boolean;
 }
 
-/** A product a user has saved (per-user, RLS-protected). */
+/** A product a user has saved (owner-scoped). */
 export interface WishlistItem {
   id: string;
   user_id: string;
@@ -97,7 +106,7 @@ export interface WishlistItem {
   created_at: string;
 }
 
-/** A "notify me below target_price" rule for a product (RLS-protected). */
+/** A "notify me below target_price" rule for a product (owner-scoped). */
 export interface PriceAlert {
   id: string;
   user_id: string;
@@ -108,6 +117,32 @@ export interface PriceAlert {
   last_triggered_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** Minimal user record returned by the auth API. */
+export interface User {
+  id: string;
+  email: string;
+  display_name: string | null;
+  created_at: string;
+}
+
+/** Request shape for /api/auth/register. */
+export interface RegisterRequest {
+  email: string;
+  password: string;
+  display_name?: string;
+}
+
+/** Request shape for /api/auth/login. */
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+/** Response shape for /api/auth/register and /api/auth/login. */
+export interface AuthResponse {
+  user: User;
 }
 
 /* --------------------------------------------------------------------------
@@ -152,4 +187,9 @@ export interface SearchResult {
   misses: PlatformMiss[];
   /** All products that matched, for the card grid below the summary. */
   products: Product[];
+}
+
+/** SearchResult returned by the `/api/search-miss` function. */
+export interface LiveSearchResult extends SearchResult {
+  live: true;
 }

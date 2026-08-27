@@ -9,9 +9,11 @@ export const ROUTES = {
   login: '/login',
   signup: '/signup',
   browse: '/browse',
+  dashboard: '/dashboard',
   product: '/product/:id',
   wishlist: '/wishlist',
   settings: '/settings',
+  admin: '/admin',
 } as const;
 
 /** Build a product detail path for a given id. */

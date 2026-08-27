@@ -21,21 +21,20 @@ const config: Config = {
         // Brand / structure
         primary: {
           DEFAULT: '#3D5AF1',
-          hover: '#2E45C4', // hover / pressed
+          hover: '#2E45C4',
         },
         // Semantic price signals
-        savings: '#12B76A', // best price, price-drop, alert-hit
-        warning: '#F79009', // price increase (amber)
-        danger: '#F04438', // destructive only
+        savings: '#12B76A',
+        warning: '#F79009',
+        danger: '#F04438',
 
-        // Neutrals / surfaces
-        bg: '#F8FAFC', // page background (soft cool gray)
-        surface: '#FFFFFF', // cards, modals, nav
-        border: '#EAECF0', // hairlines, dividers, input outlines
-
-        // Text
-        ink: '#0F172A', // headings, prices (text primary)
-        muted: '#64748B', // labels, secondary info
+        // Neutrals — driven by CSS variables so light/dark themes swap cleanly.
+        // Light and dark values are defined in src/index.css as --color-*.
+        bg: 'rgb(var(--color-bg) / <alpha-value>)',
+        surface: 'rgb(var(--color-surface) / <alpha-value>)',
+        border: 'rgb(var(--color-border) / <alpha-value>)',
+        ink: 'rgb(var(--color-text) / <alpha-value>)',
+        muted: 'rgb(var(--color-muted) / <alpha-value>)',
       },
       fontFamily: {
         // Headings / display — geometric, modern, friendly

@@ -1,22 +1,22 @@
 /**
- * ingest-jumia.mjs — persist scraped Jumia prices into Supabase.
+ * ingest-jumia.mjs — persist scraped Jumia prices into MongoDB.
  *
  * This is the SERVER-SIDE ingest step. It reuses the scraper's discovery +
  * JSON-LD extraction (scripts/scrape-jumia.mjs → searchJumia), then does two
- * writes per product with the Supabase `service_role` key:
+ * writes per product against MongoDB (connection from scripts/db.mjs):
  *
- *   1. UPSERT public.products  — current state (title/offers/lowest_price/…),
- *      keyed by a deterministic UUIDv5 of the product URL so re-runs update the
- *      same row instead of duplicating.
- *   2. INSERT public.price_observations — one APPEND-ONLY row recording the price
- *      we actually observed (product, platform, price, timestamp). This is the
- *      real, immutable history from which "price dropped/increased by ₦X" is
- *      later DERIVED. Nothing here is estimated or faked: a movement can only
- *      exist once two genuine observations are on record (see migration 0004).
+ *   1. UPSERT products  — current state (title/offers/lowest_price/…), keyed by a
+ *      deterministic UUIDv5 of the product URL (`_id`) so re-runs update the same
+ *      document instead of duplicating.
+ *   2. INSERT price_observations — one APPEND-ONLY doc recording the price we
+ *      actually observed (product, platform, price, timestamp). This is the real,
+ *      immutable history from which "price dropped/increased by ₦X" is later
+ *      DERIVED. Nothing here is estimated or faked: a movement can only exist once
+ *      two genuine observations are on record.
  *
- * SECURITY: the `service_role` key is read from the environment and used ONLY
- * here. It is never `VITE_`-prefixed and this file is never imported by src/**,
- * so it can never reach the frontend bundle. Run it server-side only.
+ * SECURITY: `MONGODB_URI` is read from the environment and used ONLY server-side.
+ * It is never `VITE_`-prefixed and this file is never imported by src/**, so it
+ * can never reach the frontend bundle. Run it server-side only.
  *
  * Usage (Node 20.6+ for --env-file):
  *   node --env-file=.env scripts/ingest-jumia.mjs "infinix hot" --category=phones
@@ -27,18 +27,18 @@
  * same write path without spawning a process per target. Importing this module
  * has no side effects — the CLI only runs when the file is executed directly.
  *
- * Requires migrations 0001–0004 applied and SUPABASE_SERVICE_ROLE_KEY in .env.
+ * Requires MONGODB_URI in .env (and optionally MONGODB_DB).
  */
-import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import { createClient } from '@supabase/supabase-js';
 import { searchJumia } from './scrape-jumia.mjs';
+import { uuidv5 } from './uuid.mjs';
+import { connect, ensureIndexes } from './db.mjs';
 
 /* --------------------------------------------------------------- config --- */
 
 // Valid category slugs — MUST stay in sync with CATEGORIES in
-// src/lib/constants.ts and the products.category CHECK (migration 0003).
-// Exported so the batch runner can validate ingest-targets.json up front.
+// src/lib/constants.ts. Exported so the batch runner can validate
+// ingest-targets.json up front.
 export const CATEGORY_SLUGS = [
   'phones',
   'accessories',
@@ -51,66 +51,87 @@ export const CATEGORY_SLUGS = [
   'health',
 ];
 
+/* ----------------------------------------------------- category mapping --- */
+
+/**
+ * Map Jumia's own leaf category (the `category` field in each product's JSON-LD,
+ * e.g. "Android Phones" or "Flip Cases", surfaced by the scraper as
+ * `source_category`) onto one of our CATEGORY_SLUGS.
+ *
+ * WHY: a single search matches many products by slug — an "infinix" query hits
+ * the phone AND its flip cases — but they are not all the query's category. Using
+ * each item's real Jumia category lets the phone store as `phones` while its case
+ * stores as `accessories`, instead of tarring everything with one curated slug.
+ *
+ * Substring keyword match over the lowercased label, in PRIORITY order: accessories
+ * is checked before phones so "Flip Cases"/"Phone Cases" resolve to accessories,
+ * not phones (they contain "phone"). Anything no rule matches returns `fallback` —
+ * the curated per-query slug from ingest-targets.json — so an unrecognized label is
+ * never worse than the old blanket behaviour, only better when a rule fires.
+ *
+ * Confirmed against live pages: "Android Phones" → phones, "Flip Cases" →
+ * accessories. The remaining keywords are conservative, collision-checked guesses
+ * at Jumia's vocabulary (deliberately omitting ambiguous stems like "pen"/"tablet"/
+ * "fan"/"cap" that collide with pendants/medicine/infant-wear/capacitors — those
+ * safely fall back). Add rows as real labels are observed; the raw label is stored
+ * on each product (`source_category`) so this can be re-run without re-scraping.
+ */
+const CATEGORY_RULES = [
+  ['accessories', ['case', 'cover', 'pouch', 'protector', 'tempered', 'screen guard', 'charger', 'cable', 'adapter', 'earphone', 'headphone', 'earbud', 'headset', 'memory card', 'sd card', 'flash drive', 'pendrive', 'pen drive', 'otg', 'phone holder', 'selfie stick', 'stylus']],
+  ['laptops', ['laptop', 'macbook', 'computing', 'desktop', 'monitor', 'all-in-one']],
+  ['phones', ['phone', 'smartphone', 'ipad']],
+  ['electronics', ['television', 'tv', 'speaker', 'camera', 'audio', 'projector', 'console', 'playstation', 'xbox', 'printer', 'generator', 'inverter', 'power bank', 'powerbank', 'radio']],
+  ['textbooks', ['textbook', 'book', 'stationery', 'stationary', 'pencil', 'notebook', 'diary']],
+  ['bags', ['backpack', 'bag', 'luggage', 'suitcase', 'satchel']],
+  ['dorm-supplies', ['kettle', 'bedsheet', 'bedding', 'duvet', 'pillow', 'blanket', 'mattress', 'bucket', 'flask', 'cookware', 'stove', 'curtain']],
+  ['fashion', ['shoe', 'sneaker', 'footwear', 'sandal', 'slipper', 'clothing', 'apparel', 'dress', 'shirt', 'trouser', 'jean', 'wristwatch', 'watch', 'jewel', 'sunglass', 'belt']],
+  ['health', ['lotion', 'cream', 'skincare', 'beauty', 'cosmetic', 'makeup', 'soap', 'perfume', 'fragrance', 'deodorant', 'shampoo', 'vitamin', 'supplement', 'sanitary', 'razor', 'hygiene']],
+];
+
+/**
+ * Classify one Jumia leaf label to a CATEGORY_SLUG, or `fallback` if unrecognized.
+ * `fallback` is assumed already validated against CATEGORY_SLUGS by the caller.
+ */
+export function classifyCategory(sourceCategory, fallback) {
+  if (typeof sourceCategory !== 'string' || !sourceCategory.trim()) return fallback;
+  const hay = sourceCategory.toLowerCase();
+  for (const [slug, keywords] of CATEGORY_RULES) {
+    if (keywords.some((k) => hay.includes(k))) return slug;
+  }
+  return fallback;
+}
+
 const PLATFORM = 'jumia';
 const RETAILER = 'Jumia';
 
-/* ------------------------------------------------------------ uuid (v5) --- */
-
-// RFC 4122 URL namespace — a fixed, standard constant. Hashing each product URL
-// under it yields a stable id: the same URL always maps to the same product row.
-const URL_NAMESPACE = '6ba7b811-9dad-11d1-80b4-00c04fd430c8';
-
-function uuidToBytes(uuid) {
-  const hex = uuid.replace(/-/g, '');
-  const bytes = Buffer.alloc(16);
-  for (let i = 0; i < 16; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-  return bytes;
-}
-
-/** Deterministic RFC 4122 v5 (SHA-1) UUID from a name string. Zero-dep. */
-function uuidv5(name, namespace = URL_NAMESPACE) {
-  const hash = createHash('sha1')
-    .update(Buffer.concat([uuidToBytes(namespace), Buffer.from(name, 'utf8')]))
-    .digest();
-  const b = hash.subarray(0, 16);
-  b[6] = (b[6] & 0x0f) | 0x50; // version 5
-  b[8] = (b[8] & 0x3f) | 0x80; // variant RFC 4122
-  const h = b.toString('hex');
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
-}
-
 const naira = (n) => '₦' + Number(n).toLocaleString('en-NG', { maximumFractionDigits: 0 });
+
+/** Mask any user:pass@ credentials in a Mongo URI before logging it. */
+export const redactUri = (uri) => String(uri).replace(/\/\/[^@/]+@/, '//***@');
 
 /* ---------------------------------------------------------- client setup --- */
 
 /**
- * Build the service_role Supabase client from the environment, validating that
- * both the URL and the secret key are present. Fatal (process.exit) on a missing
- * credential — no target can run without it, so this is correct for both the CLI
- * and the batch runner. Returns { client, url } (url is used only for logging).
+ * Open the MongoDB connection from the environment and ensure the app indexes
+ * exist. Fatal (process.exit) on a missing/unreachable URI — no target can run
+ * without it, so this is correct for both the CLI and the batch runner. Returns
+ * { client, db, uri }; the CALLER owns the client and MUST `await client.close()`
+ * when done (in a `finally`), or the process hangs on the open socket.
  */
-export function createIngestClient() {
-  const url = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!url) {
-    die('missing SUPABASE_URL / VITE_SUPABASE_URL. Did you run with `node --env-file=.env` (or set it in the CI env)?');
+export async function createIngestClient() {
+  let conn;
+  try {
+    conn = await connect();
+  } catch (err) {
+    die(err.message);
   }
-  if (!key) {
-    die(
-      'missing SUPABASE_SERVICE_ROLE_KEY.\n' +
-        '  Add it to .env (server-side only — never a VITE_ var). With the new key\n' +
-        '  format it is the "sb_secret_…" key (Project Settings → API → secret key),\n' +
-        '  the counterpart of the sb_publishable_… anon key. Then run with\n' +
-        '  `node --env-file=.env` (or provide it via the CI env).',
-    );
+  try {
+    await ensureIndexes(conn.db);
+  } catch (err) {
+    await conn.client.close().catch(() => {});
+    die(`could not create indexes: ${err.message}`);
   }
-
-  // service_role client: no session persistence/refresh — this is a one-shot job.
-  const client = createClient(url, key, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-  return { client, url };
+  return conn; // { client, db, uri }
 }
 
 /* ------------------------------------------------------------ core ingest --- */
@@ -122,14 +143,14 @@ export function createIngestClient() {
  * carry on to the next target. Returns a summary of what was written.
  *
  * @param {object}  opts
- * @param {import('@supabase/supabase-js').SupabaseClient} opts.client
- * @param {string}  opts.keyword       search query
- * @param {string}  opts.category      one of CATEGORY_SLUGS
- * @param {number} [opts.limit]        max products (defaults to the scraper's)
- * @param {string} [opts.supabaseUrl]  shown in the log header only
+ * @param {import('mongodb').Db} opts.db
+ * @param {string}  opts.keyword     search query
+ * @param {string}  opts.category    one of CATEGORY_SLUGS
+ * @param {number} [opts.limit]      max products (defaults to the scraper's)
+ * @param {string} [opts.mongoUri]   shown (redacted) in the log header only
  * @returns {Promise<{keyword:string, category:string, found:number, upserted:number, observations:number}>}
  */
-export async function ingestSearch({ client, keyword, category, limit, supabaseUrl }) {
+export async function ingestSearch({ db, keyword, category, limit, mongoUri }) {
   if (!keyword) throw new Error('missing product query');
   if (!category) throw new Error(`missing category — one of: ${CATEGORY_SLUGS.join(', ')}`);
   if (!CATEGORY_SLUGS.includes(category)) {
@@ -139,10 +160,10 @@ export async function ingestSearch({ client, keyword, category, limit, supabaseU
     throw new Error(`invalid limit "${limit}". Must be a positive integer.`);
   }
 
-  console.log(`\nPricePilot · Jumia → Supabase ingest`);
+  console.log(`\nPricePilot · Jumia → MongoDB ingest`);
   console.log(`query   : "${keyword}"`);
   console.log(`category: ${category}`);
-  console.log(supabaseUrl ? `target  : ${supabaseUrl}\n` : '');
+  console.log(mongoUri ? `target  : ${redactUri(mongoUri)}\n` : '');
 
   const { results } = await searchJumia(keyword, limit);
 
@@ -152,98 +173,105 @@ export async function ingestSearch({ client, keyword, category, limit, supabaseU
   }
 
   // Pair each scraped record with its deterministic product id up front, so the
-  // products row and its observation share the same id.
-  const rows = results.map((record) => ({ record, id: uuidv5(record.url) }));
+  // product document and its observation share the same id. Each product also gets
+  // its own category, classified from the item's real Jumia label (source_category)
+  // and falling back to the curated query slug when the label can't be placed.
+  const rows = results.map((record) => ({
+    record,
+    id: uuidv5(record.url),
+    cat: classifyCategory(record.source_category, category),
+  }));
+  const now = new Date();
 
-  // 1. Product rows (current state). price_history / price_events are omitted on
-  //    purpose: history now lives in price_observations, and omitting them keeps
-  //    the upsert non-destructive to any existing values on those columns.
-  const productRows = rows.map(({ record: r, id }) => ({
-    id,
-    title: r.title,
-    category,
-    brand: r.brand,
-    image_url: r.image_url,
-    lowest_price: r.price, // Jumia JSON-LD has no shipping → total == price
-    offers: [
-      {
-        platform: PLATFORM,
-        retailer: RETAILER,
-        price: r.price,
-        shipping: 0,
-        // In stock unless the page explicitly says otherwise (a listed, priced
-        // item with unknown availability is treated as available for the UI).
-        inStock: r.inStock !== false,
-        url: r.url,
+  // How many products the real Jumia category pulled OFF the curated slug — e.g. a
+  // flip case caught by an "infinix" phone query, corrected phones → accessories.
+  const reclassified = rows.filter((r) => r.cat !== category).length;
+
+  const products = db.collection('products');
+  const observations = db.collection('price_observations');
+
+  // 1. Product upserts (current state). price_history / price_events are omitted
+  //    on purpose: history lives in price_observations, and omitting them keeps
+  //    the upsert non-destructive to any existing values on those fields.
+  //    `created_at` is set only on insert; `updated_at` on every run.
+  const productOps = rows.map(({ record: r, id }) => ({
+    updateOne: {
+      filter: { _id: id },
+      update: {
+        $set: {
+          title: r.title,
+          category,
+          brand: r.brand,
+          image_url: r.image_url,
+          lowest_price: r.price, // Jumia JSON-LD has no shipping → total == price
+          offers: [
+            {
+              platform: PLATFORM,
+              retailer: RETAILER,
+              price: r.price,
+              shipping: 0,
+              // In stock unless the page explicitly says otherwise (a listed,
+              // priced item with unknown availability is treated as available).
+              inStock: r.inStock !== false,
+              url: r.url,
+            },
+          ],
+          updated_at: now,
+        },
+        $setOnInsert: { created_at: now },
       },
-    ],
+      upsert: true,
+    },
   }));
 
-  // 2. Observation rows (append-only truth). in_stock keeps the honest raw value,
-  //    including null when the page didn't state availability.
-  const observationRows = rows.map(({ record: r, id }) => ({
+  // 2. Observation docs (append-only truth). in_stock keeps the honest raw value,
+  //    including null when the page didn't state availability. Stored as a Date
+  //    so time-ordered reads (latest-per-product) sort correctly.
+  const observationDocs = rows.map(({ record: r, id }) => ({
     product_id: id,
     platform: PLATFORM,
     price: r.price,
     currency: r.currency ?? 'NGN',
     in_stock: r.inStock,
-    scraped_at: r.scraped_at,
+    scraped_at: new Date(r.scraped_at),
   }));
 
   // Parent before child: products must exist before observations reference them.
-  const { error: productErr } = await client
-    .from('products')
-    .upsert(productRows, { onConflict: 'id' });
-
-  if (productErr) {
-    if (/category/i.test(productErr.message) && /check/i.test(productErr.message)) {
-      throw new Error(
-        `products upsert failed on the category CHECK — apply migration 0003 (widen categories).\n  ${productErr.message}`,
-      );
-    }
-    throw new Error(
-      `products upsert failed: ${productErr.message}${productErr.details ? `\n  ${productErr.details}` : ''}`,
-    );
+  try {
+    await products.bulkWrite(productOps, { ordered: false });
+  } catch (err) {
+    throw new Error(`products upsert failed: ${err.message}`);
   }
 
-  const { error: obsErr } = await client.from('price_observations').insert(observationRows);
-
-  if (obsErr) {
-    if (/price_observations/i.test(obsErr.message) && /(does not exist|relation)/i.test(obsErr.message)) {
-      throw new Error(`price_observations insert failed — apply migration 0004 first.\n  ${obsErr.message}`);
-    }
-    throw new Error(
-      `price_observations insert failed: ${obsErr.message}${obsErr.details ? `\n  ${obsErr.details}` : ''}`,
-    );
+  try {
+    await observations.insertMany(observationDocs);
+  } catch (err) {
+    throw new Error(`price_observations insert failed: ${err.message}`);
   }
 
   /* ---------------------------------------------------------- read-back --- */
 
   const ids = rows.map((r) => r.id);
 
-  const { data: savedProducts, error: readErr } = await client
-    .from('products')
-    .select('id, title, category, lowest_price')
-    .in('id', ids);
-
-  if (readErr) throw new Error(`read-back failed: ${readErr.message}`);
+  const savedProducts = await products
+    .find({ _id: { $in: ids } })
+    .project({ title: 1, category: 1, lowest_price: 1 })
+    .toArray();
 
   // Observation counts per product, to prove history is accumulating across runs.
-  const { data: obs, error: obsReadErr } = await client
-    .from('price_observations')
-    .select('product_id')
-    .in('product_id', ids);
-
-  if (obsReadErr) throw new Error(`observation read-back failed: ${obsReadErr.message}`);
+  const obs = await observations
+    .find({ product_id: { $in: ids } })
+    .project({ product_id: 1 })
+    .toArray();
 
   const obsCount = new Map();
-  for (const o of obs ?? []) obsCount.set(o.product_id, (obsCount.get(o.product_id) ?? 0) + 1);
+  for (const o of obs) obsCount.set(o.product_id, (obsCount.get(o.product_id) ?? 0) + 1);
 
   console.log(
-    `\n✔ upserted ${productRows.length} product(s), logged ${observationRows.length} observation(s).\n`,
+    `\n✔ upserted ${productOps.length} product(s), logged ${observationDocs.length} observation(s).\n`,
   );
 
-  const byId = new Map((savedProducts ?? []).map((p) => [p.id, p]));
+  const byId = new Map(savedProducts.map((p) => [p._id, p]));
   for (const [i, id] of ids.entries()) {
     const p = byId.get(id);
     if (!p) continue;
@@ -263,8 +291,8 @@ export async function ingestSearch({ client, keyword, category, limit, supabaseU
     keyword,
     category,
     found: results.length,
-    upserted: productRows.length,
-    observations: observationRows.length,
+    upserted: productOps.length,
+    observations: observationDocs.length,
   };
 }
 
@@ -305,12 +333,15 @@ async function main() {
     die(`invalid --limit "${limit}". Must be a positive integer.`);
   }
 
-  const { client, url } = createIngestClient();
+  const { client, db, uri } = await createIngestClient();
 
   try {
-    await ingestSearch({ client, keyword, category, limit, supabaseUrl: url });
+    await ingestSearch({ db, keyword, category, limit, mongoUri: uri });
   } catch (err) {
     die(err.message);
+  } finally {
+    // Mongo keeps the socket open; without this the CLI would hang after writing.
+    await client.close();
   }
 }
 

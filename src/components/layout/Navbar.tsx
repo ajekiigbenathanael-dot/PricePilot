@@ -1,24 +1,47 @@
-import { useState } from 'react';
-import { Link, NavLink } from 'react-router-dom';
+import { useState, useRef, useEffect } from 'react';
+import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { NAV_LINKS, ROUTES } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
 import { Container } from '@/components/ui/Container';
 import { Logo } from './Logo';
+import { useAuth } from '@/contexts/useAuth';
+import { useTheme } from '@/hooks/useTheme';
+import { useWishlist } from '@/hooks/useWishlist';
+import { ChevronDownIcon, SunIcon, MoonIcon } from '@/components/ui/icons';
 
-/**
- * Responsive top navigation. Sticky, hairline-bottom, white surface.
- * Desktop: inline links + auth actions. Mobile: hamburger-toggled panel.
- * Auth state is not wired yet (Phase 1) — Log in / Sign up are placeholders.
- */
 export function Navbar() {
   const [open, setOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const { user, loading, logout } = useAuth();
+  const { theme, setTheme } = useTheme();
+  const { savedIds } = useWishlist();
+  const navigate = useNavigate();
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    }
+    if (userMenuOpen) document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [userMenuOpen]);
+
+  const handleLogout = async () => {
+    setUserMenuOpen(false);
+    await logout();
+    navigate(ROUTES.home, { replace: true });
+  };
 
   const linkClass = ({ isActive }: { isActive: boolean }) =>
     cn(
       'rounded-control px-3 py-2 text-sm font-medium transition-colors',
       isActive ? 'text-primary' : 'text-muted hover:text-ink',
     );
+
+  const displayName = user?.display_name?.trim() || user?.email?.split('@')[0] || 'Account';
 
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-surface/95 backdrop-blur">
@@ -32,20 +55,96 @@ export function Navbar() {
           <div className="hidden items-center gap-1 md:flex">
             {NAV_LINKS.map((link) => (
               <NavLink key={link.to} to={link.to} className={linkClass}>
-                {link.label}
+                <span className="flex items-center gap-1.5">
+                  {link.label}
+                  {link.label === 'Wishlist' && savedIds.size > 0 && (
+                    <span className="ml-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-primary/10 px-1.5 text-xs font-bold text-primary">
+                      {savedIds.size}
+                    </span>
+                  )}
+                </span>
               </NavLink>
             ))}
           </div>
 
           <div className="hidden items-center gap-2 md:flex">
-            <Link to={ROUTES.login}>
-              <Button variant="ghost" size="sm">
-                Log in
-              </Button>
-            </Link>
-            <Link to={ROUTES.signup}>
-              <Button size="sm">Sign up</Button>
-            </Link>
+            <button
+              type="button"
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              className="rounded-control p-2 text-muted hover:text-ink hover:bg-bg"
+            >
+              {theme === 'dark' ? <SunIcon className="h-5 w-5" /> : <MoonIcon className="h-5 w-5" />}
+            </button>
+
+            {loading ? (
+              <div className="h-9 w-24 animate-pulse rounded-control bg-border/60" />
+            ) : user ? (
+              <div className="relative" ref={menuRef}>
+                <button
+                  type="button"
+                  onClick={() => setUserMenuOpen((v) => !v)}
+                  aria-expanded={userMenuOpen}
+                  className="flex items-center gap-2 rounded-control border border-border bg-surface px-3 py-1.5 text-sm font-medium text-ink hover:border-primary/40"
+                >
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+                    {displayName.charAt(0).toUpperCase()}
+                  </span>
+                  <span className="max-w-[120px] truncate">{displayName}</span>
+                  <ChevronDownIcon className="h-4 w-4 text-muted" />
+                </button>
+
+                {userMenuOpen && (
+                  <div className="absolute right-0 top-full mt-2 w-52 overflow-hidden rounded-card border border-border bg-surface shadow-card">
+                    <div className="border-b border-border px-4 py-3">
+                      <p className="text-sm font-medium text-ink">{displayName}</p>
+                      <p className="truncate text-xs text-muted">{user.email}</p>
+                    </div>
+                    <div className="py-1">
+                      <Link
+                        to={ROUTES.dashboard}
+                        className="flex items-center gap-3 px-4 py-2 text-sm text-ink hover:bg-bg"
+                        onClick={() => setUserMenuOpen(false)}
+                      >
+                        Dashboard
+                      </Link>
+                      <Link
+                        to={ROUTES.wishlist}
+                        className="flex items-center gap-3 px-4 py-2 text-sm text-ink hover:bg-bg"
+                        onClick={() => setUserMenuOpen(false)}
+                      >
+                        Wishlist
+                      </Link>
+                      <Link
+                        to={ROUTES.settings}
+                        className="flex items-center gap-3 px-4 py-2 text-sm text-ink hover:bg-bg"
+                        onClick={() => setUserMenuOpen(false)}
+                      >
+                        Settings
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={handleLogout}
+                        className="flex w-full items-center gap-3 px-4 py-2 text-sm text-danger hover:bg-bg"
+                      >
+                        Log out
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <>
+                <Link to={ROUTES.login}>
+                  <Button variant="ghost" size="sm">
+                    Log in
+                  </Button>
+                </Link>
+                <Link to={ROUTES.signup}>
+                  <Button size="sm">Sign up</Button>
+                </Link>
+              </>
+            )}
           </div>
 
           {/* Mobile toggle */}
@@ -92,16 +191,46 @@ export function Navbar() {
               </NavLink>
             ))}
             <div className="mt-2 flex flex-col gap-2 border-t border-border pt-3">
-              <Link to={ROUTES.login} onClick={() => setOpen(false)}>
-                <Button variant="secondary" size="md" className="w-full">
-                  Log in
-                </Button>
-              </Link>
-              <Link to={ROUTES.signup} onClick={() => setOpen(false)}>
-                <Button size="md" className="w-full">
-                  Sign up
-                </Button>
-              </Link>
+              <button
+                type="button"
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                className="flex items-center gap-3 rounded-control px-3 py-2 text-sm font-medium text-ink hover:bg-bg"
+              >
+                {theme === 'dark' ? <SunIcon className="h-5 w-5 text-muted" /> : <MoonIcon className="h-5 w-5 text-muted" />}
+                {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+              </button>
+              {user ? (
+                <>
+                  <p className="px-3 text-sm font-medium text-ink">{displayName}</p>
+                  <Link to={ROUTES.wishlist} onClick={() => setOpen(false)}>
+                    <Button variant="secondary" size="md" className="w-full">
+                      Wishlist
+                    </Button>
+                  </Link>
+                  <Link to={ROUTES.settings} onClick={() => setOpen(false)}>
+                    <Button variant="secondary" size="md" className="w-full">
+                      Settings
+                    </Button>
+                  </Link>
+                  <Button variant="ghost" size="md" className="w-full" onClick={handleLogout}>
+                    Log out
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Link to={ROUTES.login} onClick={() => setOpen(false)}>
+                    <Button variant="secondary" size="md" className="w-full">
+                      Log in
+                    </Button>
+                  </Link>
+                  <Link to={ROUTES.signup} onClick={() => setOpen(false)}>
+                    <Button size="md" className="w-full">
+                      Sign up
+                    </Button>
+                  </Link>
+                </>
+              )}
             </div>
           </Container>
         </div>

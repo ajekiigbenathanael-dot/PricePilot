@@ -13,7 +13,7 @@ export interface UseProductResult {
 }
 
 /**
- * Load a single product by id from Supabase, exposing `{ product, loading,
+ * Load a single product by id from the API, exposing `{ product, loading,
  * error, refetch }` so the detail page can render a loading skeleton first and
  * only show "not found" AFTER the fetch resolves (never a flash of not-found
  * while the request is still in flight).

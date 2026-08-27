@@ -1,9 +1,9 @@
+import { forwardRef } from 'react';
 import type { HTMLAttributes, ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 interface CardProps extends HTMLAttributes<HTMLDivElement> {
   children: ReactNode;
-  /** Adds a subtle hover lift — for interactive/clickable cards. */
   interactive?: boolean;
 }
 
@@ -11,9 +11,10 @@ interface CardProps extends HTMLAttributes<HTMLDivElement> {
  * Surface container: white background, hairline border, 12px radius, soft
  * shadow. The base building block for product cards, panels, and forms.
  */
-export function Card({ children, interactive = false, className, ...props }: CardProps) {
-  return (
+export const Card = forwardRef<HTMLDivElement, CardProps>(
+  ({ children, interactive = false, className, ...props }, ref) => (
     <div
+      ref={ref}
       className={cn(
         'rounded-card border border-border bg-surface shadow-card',
         interactive &&
@@ -24,5 +25,6 @@ export function Card({ children, interactive = false, className, ...props }: Car
     >
       {children}
     </div>
-  );
-}
+  ),
+);
+Card.displayName = 'Card';

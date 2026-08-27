@@ -1,13 +1,18 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type { PlatformMiss, Product } from '@/types';
 import { CATEGORIES, categoryLabel, type CategorySlug } from '@/lib/constants';
 import { priceStats } from '@/lib/pricing';
 import { searchProducts } from '@/lib/search';
+import { invokeLiveSearch } from '@/lib/liveSearch';
+import type { LiveSearchResult } from '@/types';
 import { useProducts } from '@/hooks/useProducts';
+import { useRecentlyViewed } from '@/hooks/useRecentlyViewed';
 import { Button } from '@/components/ui/Button';
 import { Container } from '@/components/ui/Container';
 import {
   AlertTriangleIcon,
+  ClockIcon,
   ExternalLinkIcon,
   SearchIcon,
   SearchOffIcon,
@@ -28,7 +33,7 @@ import { PlatformSummary } from '@/components/product/PlatformSummary';
  *   overall cheapest highlighted, "No match" where a store has nothing) with the
  *   matching products as cards below.
  *
- * Both read the live Supabase catalog via `useProducts`; the page renders its
+ * Both read the live catalog via `useProducts`; the page renders its
  * own loading, error, and empty states around that data.
  */
 
@@ -58,12 +63,36 @@ function sortProducts(products: Product[], sort: SortKey): Product[] {
 }
 
 export function BrowsePage() {
-  const [query, setQuery] = useState('');
-  const [category, setCategory] = useState<CategorySlug | 'all'>('all');
-  const [sort, setSort] = useState<SortKey>('savings');
+  // State is synced to the URL so back/forward/refresh preserve the user's
+  // search, category, and sort — no lost state when they navigate away.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const query = searchParams.get('q') ?? '';
+  const category = (searchParams.get('category') ?? 'all') as CategorySlug | 'all';
+  const sort = (searchParams.get('sort') ?? 'savings') as SortKey;
 
-  // Live catalog from Supabase — the whole catalog, filtered client-side below.
+  const updateParams = useCallback(
+    (overrides: Partial<Record<'q' | 'category' | 'sort', string>>) => {
+      setSearchParams(
+        { q: query, category, sort, ...overrides },
+        { replace: true },
+      );
+    },
+    [query, category, sort, setSearchParams],
+  );
+
+  const setQuery = useCallback((value: string) => updateParams({ q: value }), [updateParams]);
+  const setCategory = useCallback(
+    (value: CategorySlug | 'all') => updateParams({ category: value }),
+    [updateParams],
+  );
+  const setSort = useCallback((value: SortKey) => updateParams({ sort: value }), [updateParams]);
+
+  // Live catalog from the API — the whole catalog, filtered client-side below.
   const { products, loading, error, refetch } = useProducts();
+
+  // Products this visitor recently opened (localStorage) — surfaced as a rail in
+  // browse mode so returning users can jump back to what they were comparing.
+  const { products: recentProducts, clear: clearRecent } = useRecentlyViewed();
 
   const trimmedQuery = query.trim();
   const isSearching = trimmedQuery !== '';
@@ -75,6 +104,90 @@ export function BrowsePage() {
     () => (isSearching ? searchProducts(trimmedQuery, products, { category }) : null),
     [isSearching, trimmedQuery, category, products],
   );
+
+  // Live-search-on-miss state.
+  const [liveResult, setLiveResult] = useState<LiveSearchResult | null>(null);
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [liveError, setLiveError] = useState<string | null>(null);
+  const [liveQueries, setLiveQueries] = useState<Set<string>>(new Set());
+  // Set when the user explicitly dismisses the live results for the current
+  // query, so the auto-trigger below doesn't immediately re-fetch them. Cleared
+  // by the reset effect whenever the query or category changes.
+  const [liveDismissed, setLiveDismissed] = useState(false);
+  const liveTimeoutRef = useRef<number | null>(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (liveTimeoutRef.current) window.clearTimeout(liveTimeoutRef.current);
+    };
+  }, []);
+
+  // A live search is keyed by its (query, category) pair; when either changes,
+  // clear the previous attempt. Without this, `liveResult` stays set after the
+  // first successful live search, so the `!liveResult` guard in
+  // `shouldLiveSearch` below is permanently false and no later query ever
+  // triggers another live search and a stale result/error would otherwise
+  // linger on screen under the new query. Also clears any manual dismissal so a
+  // genuinely new (or returning) query can live-search again.
+  useEffect(() => {
+    setLiveResult(null);
+    setLiveError(null);
+    setLiveDismissed(false);
+  }, [trimmedQuery, category]);
+
+  const hasLocalMatches = searchResult && searchResult.products.length > 0;
+  const shouldLiveSearch =
+    isSearching &&
+    !loading &&
+    !error &&
+    !liveLoading &&
+    !liveResult &&
+    !liveDismissed &&
+    !hasLocalMatches &&
+    !liveQueries.has(trimmedQuery);
+
+  useEffect(() => {
+    if (!shouldLiveSearch) {
+      if (liveTimeoutRef.current) window.clearTimeout(liveTimeoutRef.current);
+      return;
+    }
+
+    liveTimeoutRef.current = window.setTimeout(async () => {
+      if (!isMountedRef.current) return;
+      setLiveLoading(true);
+      setLiveError(null);
+      try {
+        const result = await invokeLiveSearch({ query: trimmedQuery, category });
+        // A null result means the lookup succeeded but found nothing — a normal
+        // "no matches" outcome, not an error. We leave liveError unset so the
+        // terminal empty state (with its per-store links) renders instead of a
+        // warning box.
+        if (isMountedRef.current && result) {
+          setLiveResult(result);
+        }
+      } catch (e) {
+        if (isMountedRef.current) {
+          setLiveError(e instanceof Error ? e.message : 'Live search failed.');
+        }
+      } finally {
+        // Mark the query attempted whatever the outcome, so `shouldLiveSearch`
+        // stays false and we never auto-refetch in a loop (a persistent error
+        // would otherwise retry every 600ms). Re-attempts go through the Retry
+        // button or the reset effect, which drop the query from this set.
+        if (isMountedRef.current) {
+          setLiveQueries((prev) => new Set(prev).add(trimmedQuery));
+          setLiveLoading(false);
+        }
+      }
+    }, 600);
+
+    return () => {
+      if (liveTimeoutRef.current) window.clearTimeout(liveTimeoutRef.current);
+    };
+  }, [shouldLiveSearch, trimmedQuery, category]);
 
   // Browse mode: the whole (category-filtered) catalog, sorted.
   const browseList = useMemo(() => {
@@ -90,16 +203,21 @@ export function BrowsePage() {
 
   const hasFilters = isSearching || category !== 'all';
   const clearFilters = () => {
-    setQuery('');
-    setCategory('all');
+    setSearchParams({ q: '', category: 'all', sort }, { replace: true });
   };
 
   // Only show the result-count row + filtered body once there's a loaded,
   // non-empty catalog to describe (loading/error/empty are handled separately).
-  const hasCatalog = !loading && !error && products.length > 0;
+  const hasCatalog = !loading && !error && (products.length > 0 || liveResult);
 
   // Result count shown in the status row.
-  const resultCount = isSearching ? (searchResult?.products.length ?? 0) : browseList.length;
+  const localProductCount = searchResult?.products.length ?? 0;
+  const liveProductCount = liveResult?.products.length ?? 0;
+  const resultCount = isSearching
+    ? localProductCount + liveProductCount
+    : browseList.length;
+
+  const searchMisses = searchResult?.misses ?? [];
 
   return (
     <Container className="py-10 sm:py-14">
@@ -168,6 +286,30 @@ export function BrowsePage() {
         ))}
       </div>
 
+      {/* Recently viewed — a quick way back to products just compared. Shown in
+          browse mode only (hidden while searching) once a catalog is loaded. */}
+      {!isSearching && hasCatalog && recentProducts.length > 0 && (
+        <section className="mt-8">
+          <div className="mb-4 flex items-center gap-2">
+            <ClockIcon className="h-4 w-4 text-muted" />
+            <h2 className="font-display text-lg font-bold text-ink sm:text-xl">Recently viewed</h2>
+            <button
+              type="button"
+              onClick={clearRecent}
+              className="ml-auto inline-flex shrink-0 items-center gap-1 text-sm font-medium text-muted hover:text-ink"
+            >
+              <XIcon className="h-4 w-4" />
+              Clear
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4">
+            {recentProducts.slice(0, 4).map((product) => (
+              <ProductCard key={product.id} product={product} />
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Status row: result count + clear (only once a catalog is loaded) */}
       {hasCatalog && (
         <div className="mt-6 flex items-center justify-between gap-4">
@@ -204,41 +346,128 @@ export function BrowsePage() {
       ) : products.length === 0 ? (
         <CatalogEmptyState />
       ) : isSearching ? (
-        resultCount > 0 && searchResult ? (
-          <>
-            {/* Per-platform price comparison */}
-            <section className="mt-6">
-              <h2 className="font-display text-lg font-bold text-ink sm:text-xl">
-                Price across stores
-              </h2>
+        <>
+          {/* Local catalog matches */}
+          {searchResult && searchResult.products.length > 0 && (
+            <>
+              <section className="mt-6">
+                <h2 className="font-display text-lg font-bold text-ink sm:text-xl">
+                  Price across stores
+                </h2>
+                <p className="mt-1 text-sm text-muted">
+                  The cheapest match for &ldquo;{trimmedQuery}&rdquo; on each store — cheapest overall highlighted.
+                </p>
+                <div className="mt-4">
+                  <PlatformSummary result={searchResult} />
+                </div>
+              </section>
+
+              <section className="mt-10">
+                <h2 className="font-display text-lg font-bold text-ink sm:text-xl">
+                  Matching products
+                </h2>
+                <div className="mt-4 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                  {searchCards.map((product) => (
+                    <ProductCard key={product.id} product={product} />
+                  ))}
+                </div>
+              </section>
+            </>
+          )}
+
+          {/* Live search results */}
+          {liveResult && liveResult.products.length > 0 && (
+            <section className="mt-10">
+              <div className="flex items-center gap-2">
+                <h2 className="font-display text-lg font-bold text-ink sm:text-xl">
+                  Live results from Jumia
+                </h2>
+                <span className="inline-flex items-center gap-1 rounded-pill bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
+                  <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
+                  Live
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLiveResult(null);
+                    setLiveDismissed(true);
+                    setLiveQueries((prev) => {
+                      const next = new Set(prev);
+                      next.delete(trimmedQuery);
+                      return next;
+                    });
+                  }}
+                  aria-label="Clear live results"
+                  className="ml-auto inline-flex shrink-0 items-center gap-1 text-sm font-medium text-primary hover:text-primary-hover"
+                >
+                  <XIcon className="h-4 w-4" />
+                  Clear results
+                </button>
+              </div>
               <p className="mt-1 text-sm text-muted">
-                The cheapest match for “{trimmedQuery}” on each store — cheapest overall highlighted.
+                Prices pulled directly from Jumia just now. Added to our catalog for future searches.
               </p>
               <div className="mt-4">
-                <PlatformSummary result={searchResult} />
+                <PlatformSummary result={liveResult} />
               </div>
-            </section>
-
-            {/* Matching products */}
-            <section className="mt-10">
-              <h2 className="font-display text-lg font-bold text-ink sm:text-xl">
-                Matching products
-              </h2>
               <div className="mt-4 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                {searchCards.map((product) => (
+                {sortProducts(liveResult.products, sort).map((product) => (
                   <ProductCard key={product.id} product={product} />
                 ))}
               </div>
             </section>
-          </>
-        ) : (
-          <SearchEmptyState
-            query={trimmedQuery}
-            category={category}
-            misses={searchResult?.misses ?? []}
-            onClear={clearFilters}
-          />
-        )
+          )}
+
+          {/* Live search loading — also shown during the debounce window before
+              the fetch fires, so a local miss never flashes a blank gap. */}
+          {(liveLoading || shouldLiveSearch) && (
+            <div className="mt-8 flex items-center gap-3 rounded-card border border-border bg-surface px-5 py-4">
+              <div className="h-5 w-5 animate-spin rounded-full border-2 border-border border-t-primary" aria-hidden="true" />
+              <p className="text-sm text-muted">
+                Checking live prices from Jumia for &ldquo;{trimmedQuery}&rdquo;…
+              </p>
+            </div>
+          )}
+
+          {/* Live search error */}
+          {liveError && !liveLoading && (
+            <div className="mt-6 flex items-center justify-between gap-4 rounded-card border border-warning/40 bg-warning/5 px-5 py-4">
+              <p className="text-sm text-warning">{liveError}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setLiveError(null);
+                  setLiveQueries((prev) => {
+                    const next = new Set(prev);
+                    next.delete(trimmedQuery);
+                    return next;
+                  });
+                }}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-control border border-warning/40 bg-surface px-3 py-1.5 text-sm font-medium text-warning hover:bg-warning/10"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
+          {/* Nothing anywhere: zero local matches and the live lookup has
+              concluded (not pending, not loading) with no results and no
+              retryable error. */}
+          {searchResult &&
+            searchResult.products.length === 0 &&
+            !shouldLiveSearch &&
+            !liveLoading &&
+            !liveResult &&
+            !liveError &&
+            !liveDismissed && (
+              <SearchEmptyState
+                query={trimmedQuery}
+                category={category}
+                misses={searchMisses}
+                onClear={clearFilters}
+              />
+            )}
+        </>
       ) : browseList.length > 0 ? (
         <div className="mt-4 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {browseList.map((product) => (

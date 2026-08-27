@@ -2,8 +2,9 @@ import type { Product } from '@/types';
 
 /**
  * Illustrative product data for the marketing landing page (hero comparison +
- * "trending deals"). Mirrors a subset of `supabase/seed.sql` — same IDs, so the
- * cards deep-link correctly to `/product/:id` once the catalog is live.
+ * "trending deals"). A fixed sample catalog with stable IDs, so cards deep-link
+ * correctly to `/product/:id`. Demo/seed data only — the app itself renders the
+ * live catalog from `/api`, never these samples (enforced in .eslintrc.cjs).
  *
  * Pricing is realistic Nigerian street value in Naira (₦) as of mid-2026.
  * Offers follow the platform reality rule:
@@ -45,6 +46,7 @@ export const FEATURED_PRODUCTS: Product[] = [
     ],
     created_at: '2026-06-01T10:00:00Z',
     updated_at: '2026-08-08T09:00:00Z',
+    added_by_me: false,
   },
   {
     id: '00000000-0000-4000-8000-000000000002',
@@ -75,6 +77,7 @@ export const FEATURED_PRODUCTS: Product[] = [
     ],
     created_at: '2026-06-01T10:00:00Z',
     updated_at: '2026-08-08T09:00:00Z',
+    added_by_me: false,
   },
   {
     id: '00000000-0000-4000-8000-000000000003',
@@ -104,6 +107,7 @@ export const FEATURED_PRODUCTS: Product[] = [
     ],
     created_at: '2026-06-01T10:00:00Z',
     updated_at: '2026-08-08T09:00:00Z',
+    added_by_me: false,
   },
   {
     id: '00000000-0000-4000-8000-000000000004',
@@ -134,6 +138,7 @@ export const FEATURED_PRODUCTS: Product[] = [
     ],
     created_at: '2026-06-01T10:00:00Z',
     updated_at: '2026-08-08T09:00:00Z',
+    added_by_me: false,
   },
   {
     id: '00000000-0000-4000-8000-000000000005',
@@ -160,6 +165,7 @@ export const FEATURED_PRODUCTS: Product[] = [
     ],
     created_at: '2026-06-01T10:00:00Z',
     updated_at: '2026-08-08T09:00:00Z',
+    added_by_me: false,
   },
   {
     id: '00000000-0000-4000-8000-000000000006',
@@ -189,6 +195,7 @@ export const FEATURED_PRODUCTS: Product[] = [
     ],
     created_at: '2026-06-01T10:00:00Z',
     updated_at: '2026-08-08T09:00:00Z',
+    added_by_me: false,
   },
   {
     id: '00000000-0000-4000-8000-000000000007',
@@ -217,6 +224,7 @@ export const FEATURED_PRODUCTS: Product[] = [
     ],
     created_at: '2026-06-01T10:00:00Z',
     updated_at: '2026-08-08T09:00:00Z',
+    added_by_me: false,
   },
   {
     id: '00000000-0000-4000-8000-000000000008',
@@ -245,6 +253,7 @@ export const FEATURED_PRODUCTS: Product[] = [
     ],
     created_at: '2026-06-01T10:00:00Z',
     updated_at: '2026-08-08T09:00:00Z',
+    added_by_me: false,
   },
   {
     id: '00000000-0000-4000-8000-000000000009',
@@ -273,6 +282,7 @@ export const FEATURED_PRODUCTS: Product[] = [
     ],
     created_at: '2026-06-01T10:00:00Z',
     updated_at: '2026-08-08T09:00:00Z',
+    added_by_me: false,
   },
   {
     id: '00000000-0000-4000-8000-000000000010',
@@ -302,6 +312,7 @@ export const FEATURED_PRODUCTS: Product[] = [
     ],
     created_at: '2026-06-01T10:00:00Z',
     updated_at: '2026-08-08T09:00:00Z',
+    added_by_me: false,
   },
   {
     id: '00000000-0000-4000-8000-000000000011',
@@ -331,6 +342,7 @@ export const FEATURED_PRODUCTS: Product[] = [
     ],
     created_at: '2026-06-01T10:00:00Z',
     updated_at: '2026-08-08T09:00:00Z',
+    added_by_me: false,
   },
   {
     id: '00000000-0000-4000-8000-000000000012',
@@ -361,6 +373,7 @@ export const FEATURED_PRODUCTS: Product[] = [
     ],
     created_at: '2026-06-01T10:00:00Z',
     updated_at: '2026-08-08T09:00:00Z',
+    added_by_me: false,
   },
   {
     id: '00000000-0000-4000-8000-000000000013',
@@ -391,6 +404,7 @@ export const FEATURED_PRODUCTS: Product[] = [
     ],
     created_at: '2026-06-01T10:00:00Z',
     updated_at: '2026-08-08T09:00:00Z',
+    added_by_me: false,
   },
 ];
 

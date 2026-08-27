@@ -3,8 +3,8 @@
  *
  * Reads scripts/ingest-targets.json (a curated list of { q, category, limit? }
  * search targets) and runs each one through the exact same write path the manual
- * CLI uses — ingestSearch() in scripts/ingest-jumia.mjs — with the service_role
- * key from the environment. This is what the GitHub Actions cron invokes
+ * CLI uses — ingestSearch() in scripts/ingest-jumia.mjs — connecting to MongoDB
+ * via MONGODB_URI from the environment. This is what the GitHub Actions cron invokes
  * (.github/workflows/ingest.yml) to build up real price history over time.
  *
  * Design:
@@ -17,15 +17,15 @@
  *     the process exits non-zero ONLY if every target failed — a signal worth
  *     alerting on (bad credentials, source blocking us, missing migrations).
  *
- * Env: SUPABASE_URL (or VITE_SUPABASE_URL) + SUPABASE_SERVICE_ROLE_KEY, read
- * directly from process.env — so it works both locally (`npm run ingest:all`,
- * which supplies --env-file=.env) and in CI (env injected from repo secrets).
+ * Env: MONGODB_URI (+ optional MONGODB_DB), read directly from process.env — so
+ * it works both locally (`npm run ingest:all`, which supplies --env-file=.env)
+ * and in CI (env injected from repo secrets).
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { createIngestClient, ingestSearch, CATEGORY_SLUGS } from './ingest-jumia.mjs';
+import { createIngestClient, ingestSearch, CATEGORY_SLUGS, redactUri } from './ingest-jumia.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TARGETS_PATH = join(HERE, 'ingest-targets.json');
@@ -79,38 +79,43 @@ function describeTarget(t) {
 
 async function main() {
   const targets = loadTargets();
-  const { client, url } = createIngestClient();
+  const { client, db, uri } = await createIngestClient();
 
   console.log(`\nPricePilot · scheduled batch ingest`);
   console.log(`targets : ${targets.length}`);
-  console.log(`target  : ${url}`);
+  console.log(`target  : ${redactUri(uri)}`);
 
   const succeeded = [];
   const failed = [];
 
-  for (const [i, t] of targets.entries()) {
-    const invalid = targetError(t, i);
-    if (invalid) {
-      console.error(`\n✖ skipping ${invalid}\n`);
-      failed.push({ target: t, error: invalid });
-      continue;
+  try {
+    for (const [i, t] of targets.entries()) {
+      const invalid = targetError(t, i);
+      if (invalid) {
+        console.error(`\n✖ skipping ${invalid}\n`);
+        failed.push({ target: t, error: invalid });
+        continue;
+      }
+
+      console.log(`\n──────────────────────────────────────────────────────────`);
+      console.log(`[${i + 1}/${targets.length}] "${t.q}" → ${t.category}`);
+
+      try {
+        // mongoUri is omitted on purpose — the batch header already printed the
+        // target, so each per-target block stays tighter.
+        const summary = await ingestSearch({ db, keyword: t.q, category: t.category, limit: t.limit });
+        succeeded.push(summary);
+      } catch (err) {
+        console.error(`\n✖ "${t.q}" (${t.category}) failed: ${err.message}\n`);
+        failed.push({ target: t, error: err.message });
+      }
+
+      // Be gentle: brief pause before the next target (skip after the last).
+      if (i < targets.length - 1) await sleep(BETWEEN_TARGETS_MS);
     }
-
-    console.log(`\n──────────────────────────────────────────────────────────`);
-    console.log(`[${i + 1}/${targets.length}] "${t.q}" → ${t.category}`);
-
-    try {
-      // supabaseUrl is omitted on purpose — the batch header already printed the
-      // target, so each per-target block stays tighter.
-      const summary = await ingestSearch({ client, keyword: t.q, category: t.category, limit: t.limit });
-      succeeded.push(summary);
-    } catch (err) {
-      console.error(`\n✖ "${t.q}" (${t.category}) failed: ${err.message}\n`);
-      failed.push({ target: t, error: err.message });
-    }
-
-    // Be gentle: brief pause before the next target (skip after the last).
-    if (i < targets.length - 1) await sleep(BETWEEN_TARGETS_MS);
+  } finally {
+    // Close the Mongo connection so the process exits (locally and in CI).
+    await client.close();
   }
 
   /* -------------------------------------------------------------- tally --- */

@@ -9,10 +9,15 @@ export interface UseProductsResult {
   error: string | null;
   /** Re-run the fetch (e.g. from a "Try again" button after an error). */
   refetch: () => void;
+  /**
+   * Drop one product from the loaded list in place (no refetch), so a delete
+   * removes its card immediately without flashing the grid back to skeletons.
+   */
+  removeProduct: (id: string) => void;
 }
 
 /**
- * Load the product catalog from Supabase once, exposing `{ products, loading,
+ * Load the product catalog from the API once, exposing `{ products, loading,
  * error, refetch }` for the page to render its loading / error / empty states.
  *
  * Browse fetches the WHOLE catalog (no category argument) and filters it
@@ -31,6 +36,11 @@ export function useProducts(options: FetchProductsOptions = {}): UseProductsResu
   const [reloadKey, setReloadKey] = useState(0);
 
   const refetch = useCallback(() => setReloadKey((k) => k + 1), []);
+
+  const removeProduct = useCallback(
+    (id: string) => setProducts((prev) => prev.filter((p) => p.id !== id)),
+    [],
+  );
 
   useEffect(() => {
     // Ignore a resolved fetch whose inputs are already stale (category changed,
@@ -57,5 +67,5 @@ export function useProducts(options: FetchProductsOptions = {}): UseProductsResu
     };
   }, [category, reloadKey]);
 
-  return { products, loading, error, refetch };
+  return { products, loading, error, refetch, removeProduct };
 }
