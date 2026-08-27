@@ -88,6 +88,14 @@ export interface Product {
   price_events: PriceEvent[];
   created_at: string;
   updated_at: string;
+  /**
+   * True when the CURRENT signed-in user is the one who first added this product
+   * to the catalog via their own live search. Server-derived (never the raw
+   * adder id, which is an email) so it can gate the "remove" control. The delete
+   * endpoint re-checks ownership regardless, so this is a UI hint, not the
+   * authority. False for anonymous visitors and for cron-ingested products.
+   */
+  added_by_me: boolean;
 }
 
 /** A product a user has saved (owner-scoped). */

@@ -9,6 +9,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getDb } from '../_lib/db';
 import { errMessage } from '../_lib/http';
+import { resolveUserId } from '../_lib/session';
 import { serializeProduct, type ProductDoc } from '../_lib/serialize';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -18,9 +19,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const filter = category && category !== 'all' ? { category } : {};
 
   try {
+    const userId = await resolveUserId(req);
     const db = await getDb();
     const docs = await db.collection<ProductDoc>('products').find(filter).toArray();
-    return res.status(200).json(docs.map(serializeProduct));
+    return res.status(200).json(docs.map((d) => serializeProduct(d, userId)));
   } catch (e) {
     return res.status(500).json({ error: `Failed to load products: ${errMessage(e)}` });
   }

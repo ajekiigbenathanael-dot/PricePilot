@@ -21,6 +21,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getDb } from './_lib/db';
 import { errMessage } from './_lib/http';
+import { resolveUserId } from './_lib/session';
 import type { ObservationDoc, ProductDoc } from './_lib/serialize';
 import { searchJumia } from '../scripts/scrape-jumia.mjs';
 import { uuidv5 } from '../scripts/uuid.mjs';
@@ -79,6 +80,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const obsCol = db.collection<ObservationDoc>('price_observations');
     const now = new Date();
 
+    // Optional auth: a signed-in searcher is recorded as each new product's
+    // adder, so they (and only they) can later remove it. Anonymous search still
+    // works and simply leaves the product unattributed (not user-deletable).
+    const userId = await resolveUserId(req);
+
     // Build one stable id + offer per priced record.
     const built = priced.map((r) => ({
       id: uuidv5(r.url as string),
@@ -94,8 +100,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }));
 
     // ---- upsert products (stable id → update-in-place, never duplicate) --
+    // `added_by` is written ONLY on insert ($setOnInsert), so re-discovering a
+    // product someone else added first never transfers ownership. We read the
+    // after-image to tell this searcher which live results they own (and may
+    // delete) — the update path can't infer that from the write result alone.
+    const ownedById = new Map<string, boolean>();
     for (const p of built) {
-      await productsCol.updateOne(
+      const doc = await productsCol.findOneAndUpdate(
         { _id: p.id },
         {
           $set: {
@@ -107,9 +118,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             offers: [p.offer],
             updated_at: now,
           },
-          $setOnInsert: { created_at: now },
+          $setOnInsert: { created_at: now, added_by: userId ?? null },
         },
-        { upsert: true },
+        { upsert: true, returnDocument: 'after' },
+      );
+      ownedById.set(
+        p.id,
+        userId != null && doc?.added_by != null && doc.added_by === userId,
       );
     }
 
@@ -139,6 +154,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       price_events: [],
       created_at: now.toISOString(),
       updated_at: now.toISOString(),
+      added_by_me: ownedById.get(p.id) ?? false,
     }));
 
     const quotes = products.map((product) => {

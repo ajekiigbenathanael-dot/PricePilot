@@ -21,6 +21,13 @@ export interface ProductDoc {
   price_events?: unknown[];
   created_at?: Date | string;
   updated_at?: Date | string;
+  /**
+   * The id (email) of the user who FIRST added this product via their own live
+   * search, set once on insert (see api/search-miss.ts). `null`/absent for
+   * products written by the ingest cron. Never serialized to clients directly —
+   * only the derived `added_by_me` boolean is exposed.
+   */
+  added_by?: string | null;
 }
 
 /** A `price_observations` document (append-only; `_id` is an auto ObjectId). */
@@ -42,7 +49,7 @@ function toIso(value: Date | string | undefined | null): string {
 }
 
 /** products doc → the row shape `mapRow` consumes. */
-export function serializeProduct(doc: ProductDoc) {
+export function serializeProduct(doc: ProductDoc, currentUserId?: string | null) {
   return {
     id: doc._id,
     title: doc.title,
@@ -56,6 +63,12 @@ export function serializeProduct(doc: ProductDoc) {
     price_events: doc.price_events ?? [],
     created_at: toIso(doc.created_at),
     updated_at: toIso(doc.updated_at),
+    // Whether the CURRENT requester is the user who first added this product.
+    // Derived here rather than sending the raw `added_by` (an email — PII we must
+    // not leak to every visitor). Anonymous requester (no userId) ⇒ always false,
+    // as are cron-added products (added_by null).
+    added_by_me:
+      currentUserId != null && doc.added_by != null && doc.added_by === currentUserId,
   };
 }
 

@@ -92,7 +92,7 @@ export function BrowsePage() {
 
   // Products this visitor recently opened (localStorage) — surfaced as a rail in
   // browse mode so returning users can jump back to what they were comparing.
-  const { products: recentProducts } = useRecentlyViewed();
+  const { products: recentProducts, clear: clearRecent } = useRecentlyViewed();
 
   const trimmedQuery = query.trim();
   const isSearching = trimmedQuery !== '';
@@ -129,7 +129,7 @@ export function BrowsePage() {
   // clear the previous attempt. Without this, `liveResult` stays set after the
   // first successful live search, so the `!liveResult` guard in
   // `shouldLiveSearch` below is permanently false and no later query ever
-  // triggers another live search — and a stale result/error would otherwise
+  // triggers another live search and a stale result/error would otherwise
   // linger on screen under the new query. Also clears any manual dismissal so a
   // genuinely new (or returning) query can live-search again.
   useEffect(() => {
@@ -161,20 +161,26 @@ export function BrowsePage() {
       setLiveError(null);
       try {
         const result = await invokeLiveSearch({ query: trimmedQuery, category });
-        if (isMountedRef.current) {
-          if (result) {
-            setLiveResult(result);
-          } else {
-            setLiveError('No live matches found for this query.');
-          }
-          setLiveQueries((prev) => new Set(prev).add(trimmedQuery));
+        // A null result means the lookup succeeded but found nothing — a normal
+        // "no matches" outcome, not an error. We leave liveError unset so the
+        // terminal empty state (with its per-store links) renders instead of a
+        // warning box.
+        if (isMountedRef.current && result) {
+          setLiveResult(result);
         }
       } catch (e) {
         if (isMountedRef.current) {
           setLiveError(e instanceof Error ? e.message : 'Live search failed.');
         }
       } finally {
-        if (isMountedRef.current) setLiveLoading(false);
+        // Mark the query attempted whatever the outcome, so `shouldLiveSearch`
+        // stays false and we never auto-refetch in a loop (a persistent error
+        // would otherwise retry every 600ms). Re-attempts go through the Retry
+        // button or the reset effect, which drop the query from this set.
+        if (isMountedRef.current) {
+          setLiveQueries((prev) => new Set(prev).add(trimmedQuery));
+          setLiveLoading(false);
+        }
       }
     }, 600);
 
@@ -287,6 +293,14 @@ export function BrowsePage() {
           <div className="mb-4 flex items-center gap-2">
             <ClockIcon className="h-4 w-4 text-muted" />
             <h2 className="font-display text-lg font-bold text-ink sm:text-xl">Recently viewed</h2>
+            <button
+              type="button"
+              onClick={clearRecent}
+              className="ml-auto inline-flex shrink-0 items-center gap-1 text-sm font-medium text-muted hover:text-ink"
+            >
+              <XIcon className="h-4 w-4" />
+              Clear
+            </button>
           </div>
           <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4">
             {recentProducts.slice(0, 4).map((product) => (
@@ -404,8 +418,9 @@ export function BrowsePage() {
             </section>
           )}
 
-          {/* Live search loading */}
-          {liveLoading && (
+          {/* Live search loading — also shown during the debounce window before
+              the fetch fires, so a local miss never flashes a blank gap. */}
+          {(liveLoading || shouldLiveSearch) && (
             <div className="mt-8 flex items-center gap-3 rounded-card border border-border bg-surface px-5 py-4">
               <div className="h-5 w-5 animate-spin rounded-full border-2 border-border border-t-primary" aria-hidden="true" />
               <p className="text-sm text-muted">
@@ -435,15 +450,23 @@ export function BrowsePage() {
             </div>
           )}
 
-          {/* Nothing at all */}
-          {!liveLoading && !liveResult && !searchResult && (
-            <SearchEmptyState
-              query={trimmedQuery}
-              category={category}
-              misses={searchMisses}
-              onClear={clearFilters}
-            />
-          )}
+          {/* Nothing anywhere: zero local matches and the live lookup has
+              concluded (not pending, not loading) with no results and no
+              retryable error. */}
+          {searchResult &&
+            searchResult.products.length === 0 &&
+            !shouldLiveSearch &&
+            !liveLoading &&
+            !liveResult &&
+            !liveError &&
+            !liveDismissed && (
+              <SearchEmptyState
+                query={trimmedQuery}
+                category={category}
+                misses={searchMisses}
+                onClear={clearFilters}
+              />
+            )}
         </>
       ) : browseList.length > 0 ? (
         <div className="mt-4 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">

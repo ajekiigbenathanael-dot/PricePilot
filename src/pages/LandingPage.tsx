@@ -61,7 +61,7 @@ const HOW_IT_WORKS = [
   {
     icon: SearchIcon,
     title: 'Search anything',
-    body: 'From calculators to comforters — every product students actually buy, in one place.',
+    body: 'From calculators to comforters: every product students actually buy, in one place.',
   },
   {
     icon: TagIcon,
@@ -127,7 +127,7 @@ export function LandingPage() {
                 <b className="font-semibold text-ink">
                   cheapest prices across Jumia, Konga, Slot, PayPorte &amp; Temu
                 </b>{' '}
-                — electronics, textbooks, backpacks, dorm gear and beyond. Track any product
+                on electronics, textbooks, backpacks, dorm gear and beyond. Track any product
                 and get alerted the moment it drops.
               </p>
 
@@ -155,7 +155,7 @@ export function LandingPage() {
               </ul>
             </div>
 
-            {/* Value-prop visual — live comparison, skeleton, or graceful placeholder */}
+            {/* Value-prop visual  live comparison, skeleton, or graceful placeholder */}
             <div className="lg:pl-6">
               {loading ? (
                 <HeroComparisonSkeleton />
@@ -393,7 +393,7 @@ function HeroComparisonPlaceholder() {
       </div>
 
       <div className="border-t border-border bg-bg px-5 py-4 text-sm leading-relaxed text-muted">
-        We’re pulling live prices from every store now — real comparisons show up here the
+        We’re pulling live prices from every store now  real comparisons show up here the
         moment they land.
       </div>
     </div>
@@ -427,7 +427,7 @@ function TrendingEmpty() {
       </div>
       <h3 className="mt-4 font-display text-lg font-bold text-ink">Deals are on the way</h3>
       <p className="mt-1 max-w-sm text-sm text-muted">
-        We only feature real prices pulled live from the stores. We’re adding them now —
+        We only feature real prices pulled live from the stores. We’re adding them now 
         check back soon.
       </p>
     </div>

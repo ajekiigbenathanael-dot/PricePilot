@@ -52,6 +52,9 @@ export async function getDb(): Promise<Db> {
       await db
         .collection('price_observations')
         .createIndex({ product_id: 1, platform: 1, scraped_at: -1 });
+      await db.collection('wishlist').createIndex({ user_id: 1, product_id: 1 });
+      await db.collection('price_alerts').createIndex({ user_id: 1 });
+      await db.collection('sessions').createIndex({ expires_at: 1 }, { expireAfterSeconds: 0 });
       store.indexed = true;
     } catch {
       /* leave unindexed — the next request retries; reads work regardless */

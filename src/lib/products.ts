@@ -52,6 +52,8 @@ interface ProductRow {
   price_history: RawPricePoint[] | null;
   created_at: string;
   updated_at: string;
+  /** Set by the API when the current session added this product; absent = false. */
+  added_by_me?: boolean;
 }
 
 /** An observation row as the API returns it. */
@@ -116,6 +118,7 @@ export function mapRow(row: ProductRow): Product {
     price_events: [],
     created_at: row.created_at,
     updated_at: row.updated_at,
+    added_by_me: row.added_by_me ?? false,
   };
 }
 
@@ -175,4 +178,15 @@ export async function fetchObservations(
   if (platform) params.set('platform', platform);
   const rows = await apiFetch<ObservationRow[]>(`/api/observations?${params.toString()}`);
   return rows.map(mapObservation);
+}
+
+/**
+ * Delete a product from the shared catalog. The server allows this ONLY when the
+ * signed-in user is the one who originally added the product via live search: it
+ * re-verifies ownership server-side, so the client `added_by_me` flag is just a
+ * UI hint. Resolves on success; throws `Error(server message)` on 401/403/404/500
+ * (e.g. "You can only remove products you added.") for the caller to surface.
+ */
+export async function deleteProduct(id: string): Promise<void> {
+  await apiFetch(`/api/products/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }

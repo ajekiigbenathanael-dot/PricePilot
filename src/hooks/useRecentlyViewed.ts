@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { fetchProductById } from '@/lib/products';
 import type { Product } from '@/types';
 
@@ -28,6 +28,11 @@ export function recordView(productId: string) {
   const ids = readFromStorage();
   const filtered = ids.filter((id) => id !== productId);
   writeToStorage([productId, ...filtered].slice(0, MAX));
+}
+
+/** Forget every recently-viewed product (clears the localStorage list). */
+export function clearViews() {
+  writeToStorage([]);
 }
 
 export function useRecentlyViewed() {
@@ -64,5 +69,10 @@ export function useRecentlyViewed() {
     };
   }, []);
 
-  return { products, loading, error };
+  const clear = useCallback(() => {
+    clearViews();
+    setProducts([]);
+  }, []);
+
+  return { products, loading, error, clear };
 }

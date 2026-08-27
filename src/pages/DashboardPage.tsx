@@ -11,13 +11,13 @@ import { Button } from '@/components/ui/Button';
 import { Container } from '@/components/ui/Container';
 import { ProductCard } from '@/components/product/ProductCard';
 import { ProductCardSkeleton } from '@/components/product/ProductCardSkeleton';
-import { HeartIcon, BellIcon, ExternalLinkIcon, ClockIcon } from '@/components/ui/icons';
+import { HeartIcon, BellIcon, ExternalLinkIcon, ClockIcon, XIcon } from '@/components/ui/icons';
 
 export function DashboardPage() {
   const { user } = useAuth();
   const { items: wishlistItems, loading: wlLoading, error: wlError } = useWishlist();
   const { alerts, loading: alLoading, error: alError } = useAlerts();
-  const { products: recentProducts } = useRecentlyViewed();
+  const { products: recentProducts, clear: clearRecent } = useRecentlyViewed();
 
   const displayName = user?.display_name || user?.email?.split('@')[0] || 'there';
 
@@ -136,6 +136,14 @@ export function DashboardPage() {
             <div className="mb-4 flex items-center gap-2">
               <ClockIcon className="h-4 w-4 text-muted" />
               <h2 className="text-lg font-semibold text-ink">Recently viewed</h2>
+              <button
+                type="button"
+                onClick={clearRecent}
+                className="ml-auto inline-flex shrink-0 items-center gap-1 text-sm font-medium text-muted hover:text-ink"
+              >
+                <XIcon className="h-4 w-4" />
+                Clear
+              </button>
             </div>
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
               {recentProducts.slice(0, 4).map((product) => (
