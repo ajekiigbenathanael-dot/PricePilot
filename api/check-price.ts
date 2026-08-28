@@ -27,6 +27,7 @@ import { getDb } from './_lib/db';
 import { errMessage, UUID_RE } from './_lib/http';
 import type { ObservationDoc, ProductDoc } from './_lib/serialize';
 import { UA, scrapeProduct } from '../scripts/scrape-jumia.mjs';
+import { checkRateLimit, clientIp } from './_lib/ratelimit';
 
 // Serverless: allow up to 30s for the single outbound store fetch + writes.
 export const config = { maxDuration: 30 };
@@ -36,6 +37,9 @@ const RETAILER = 'Jumia';
 const FETCH_TIMEOUT_MS = 10_000;
 // Don't re-fetch the same product more than once per window.
 const RATE_GUARD_MS = 10 * 60 * 1000;
+// Per-IP rate limit: max 6 checks per minute (one every 10s).
+const RATE_LIMIT_MAX = 6;
+const RATE_LIMIT_REFILL_PER_SEC = 1 / 10;
 
 /** A stored offer (loose — validated where used). */
 interface Offer {
@@ -73,6 +77,14 @@ function readBody(req: VercelRequest): Record<string, unknown> {
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed.' });
+
+  // ---- per-IP rate limit -------------------------------------------------
+  const ip = clientIp(req);
+  const rl = checkRateLimit(`check-price:${ip}`, RATE_LIMIT_MAX, RATE_LIMIT_REFILL_PER_SEC);
+  if (!rl.ok) {
+    res.setHeader('Retry-After', String(rl.retryAfter));
+    return res.status(429).json({ error: `Too many price checks. Try again in ${rl.retryAfter}s.` });
+  }
 
   // ---- input -------------------------------------------------------------
   const productId = String(readBody(req).productId ?? '').trim();

@@ -25,11 +25,15 @@ import { resolveUserId } from './_lib/session';
 import type { ObservationDoc, ProductDoc } from './_lib/serialize';
 import { searchJumia } from '../scripts/scrape-jumia.mjs';
 import { uuidv5 } from '../scripts/uuid.mjs';
+import { checkRateLimit, clientIp } from './_lib/ratelimit';
 
 export const config = { maxDuration: 30 };
 
 const PLATFORM = 'jumia';
 const RETAILER = 'Jumia';
+// Per-IP rate limit: max 2 live searches per minute (each can scrape up to 5 pages).
+const RATE_LIMIT_MAX = 2;
+const RATE_LIMIT_REFILL_PER_SEC = 1 / 30;
 
 /** Vercel parses a JSON body into req.body; be tolerant of a raw string too. */
 function readBody(req: VercelRequest): Record<string, unknown> {
@@ -47,6 +51,14 @@ function readBody(req: VercelRequest): Record<string, unknown> {
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed.' });
+
+  // ---- per-IP rate limit -------------------------------------------------
+  const ip = clientIp(req);
+  const rl = checkRateLimit(`search-miss:${ip}`, RATE_LIMIT_MAX, RATE_LIMIT_REFILL_PER_SEC);
+  if (!rl.ok) {
+    res.setHeader('Retry-After', String(rl.retryAfter));
+    return res.status(429).json({ error: `Too many live searches. Try again in ${rl.retryAfter}s.` });
+  }
 
   // ---- input -------------------------------------------------------------
   const body = readBody(req);
